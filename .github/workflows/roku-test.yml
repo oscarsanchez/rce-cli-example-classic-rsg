@@ -41,7 +41,8 @@ jobs:
           mkdir -p "$RUNNER_TEMP/bin"
           url=https://raw.githubusercontent.com/oscarsanchez/rce-cli/v0.1.0-rc.1/bin/rce
           if [ -n "$RCE_CLI_READ_TOKEN" ]; then
-            curl -fsSL -H "Authorization: Bearer $RCE_CLI_READ_TOKEN" -o "$RUNNER_TEMP/bin/rce" "$url"
+            curl -fsSL -H "Authorization: Bearer $RCE_CLI_READ_TOKEN" -H "Accept: application/vnd.github.raw" \
+              -o "$RUNNER_TEMP/bin/rce" "https://api.github.com/repos/oscarsanchez/rce-cli/contents/bin/rce?ref=v0.1.0-rc.1"
           else
             curl -fsSL -o "$RUNNER_TEMP/bin/rce" "$url"
           fi
