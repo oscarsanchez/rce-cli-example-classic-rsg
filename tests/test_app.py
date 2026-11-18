@@ -64,17 +64,22 @@ def ecp_xml(device: str, path: str) -> ElementTree.Element:
     return ElementTree.fromstring(rce("ecp", device, path)["body"])
 
 
-def wait_for_ecp(read, want, what: str, timeout: float = ECP_TIMEOUT) -> None:
-    """Poll `read()` until it returns `want`; fail after `timeout` s with its last answer."""
-    deadline = time.monotonic() + timeout
+def wait_for_ecp(read, want, what: str) -> None:
+    """Poll `read()` until it returns `want`; fail after ECP_TIMEOUT s with its last answer."""
+    deadline = time.monotonic() + ECP_TIMEOUT
     while (answer := read()) != want:
         if time.monotonic() > deadline:
-            pytest.fail(f"expected {what} to be {want!r} within {timeout:g} s, last answer {answer!r}")
+            pytest.fail(f"expected {what} to be {want!r} within {ECP_TIMEOUT:g} s, last answer {answer!r}")
         time.sleep(1)
 
 
+def fresh_tag() -> str:
+    """A tag no earlier run used, so a line the console replays can't match."""
+    return "t" + uuid.uuid4().hex[:8]
+
+
 class Console:
-    """The one `rce console` stream of the session. Every line is kept, in order, so a
+    """The one `rce console` stream of the test run. Every line is kept, in order, so a
     wait that starts after a key press still sees a line printed before it started."""
 
     def __init__(self, device: str, log: Path):
@@ -129,8 +134,8 @@ class Console:
                     return -1, ""
                 self.changed.wait(left)
 
-    def tail(self, count: int = 15) -> str:
-        return "last console lines:\n" + "\n".join(f"  {line}" for line in self.lines[-count:])
+    def tail(self) -> str:
+        return "last console lines:\n" + "\n".join(f"  {line}" for line in self.lines[-15:])
 
     def close(self) -> None:
         self.process.terminate()
@@ -144,14 +149,14 @@ class App:
     def __init__(self, device: str, console: Console):
         self.device = device
         self.console = console
-        self.tag = "t" + uuid.uuid4().hex[:8]
+        self.tag = fresh_tag()
         self.cursor = 0
 
     def line(self, event: str, fields: str = "") -> str:
         """A console line as the README's "Console log lines" defines it."""
         return " ".join(filter(None, ["sample:", event, f"test={self.tag}", fields]))
 
-    def next_line(self, timeout: float = LINE_TIMEOUT) -> str:
+    def next_line(self, timeout: float) -> str:
         tagged = f" test={self.tag}"
         index, line = self.console.next_line(
             self.cursor, lambda text: text.startswith("sample: ") and tagged in text, timeout
@@ -167,13 +172,9 @@ class App:
         assert got == want, f"expected the console line {want!r}, got {got!r}"
 
     def expect_playing(self, item: str) -> None:
-        """Buffering lines, then the playing line."""
-        buffering = self.line("playback", f"state=buffering item={item}")
-        got = self.next_line(PLAY_TIMEOUT)
-        while got == buffering:
-            got = self.next_line(PLAY_TIMEOUT)
-        want = self.line("playback", f"state=playing item={item}")
-        assert got == want, f"expected the console line {want!r}, got {got!r}"
+        """The buffering line, then the playing line (README "Console log lines")."""
+        self.expect("playback", f"state=buffering item={item}", PLAY_TIMEOUT)
+        self.expect("playback", f"state=playing item={item}", PLAY_TIMEOUT)
 
     def launch(self) -> None:
         """Launch (or restart) the app with this tag; return once it is ready on the grid."""
@@ -207,7 +208,7 @@ def device() -> str:
 
 @pytest.fixture(scope="session")
 def console(device: str):
-    """Opened before anything launches, kept for the whole session."""
+    """Opened before anything launches, kept for the whole test run."""
     (RESULTS / "screenshots").mkdir(parents=True, exist_ok=True)
     stream = Console(device, RESULTS / "console.log")
     yield stream
@@ -279,7 +280,7 @@ def rooibos_failures(report: list[str]) -> list[str]:
 def test_unit_tests_pass(device: str, console: Console):
     """The Rooibos suites (tests/unit) on the device: sideloading the test build starts
     it, and Rooibos prints its report, then `[Rooibos Result]: PASS` or `FAIL`."""
-    build, title = tagged_build(UNIT_ZIP, "t" + uuid.uuid4().hex[:8])
+    build, title = tagged_build(UNIT_ZIP, fresh_tag())
     start = console.mark()
     rce("sideload", device, str(build))
     begun, _ = console.next_line(start, lambda line: f"'{title}'" in line, LINE_TIMEOUT)
@@ -301,6 +302,12 @@ def media_player_state(device: str) -> str:
     return ecp_xml(device, "query/media-player").get("state", "")
 
 
+# The query/app-ui readers below answer a value to compare, or a string saying why there
+# is none yet (a node missing or not focused mid-transition), so wait_for_ecp asks again.
+# An attribute at its default value is left out: a missing `focused` means false, a
+# missing `visible` means true.
+
+
 def grid_focus(device: str):
     """(row, col, tile title) of the grid's focus from ECP query/app-ui, or why there is none.
 
@@ -314,9 +321,48 @@ def grid_focus(device: str):
     if len(rows) != 1:
         return f"{len(rows)} grid rows claim focus"
     tiles = rows[0].find("MarkupGrid")
-    tile = next(t for t in tiles.findall("GridItem") if t.get("focused") == "true")
-    title = tile.find("Label[@name='title']").get("text")
-    return int(grid.get("focusItem")), int(tiles.get("focusItem")), title
+    if tiles is None:
+        return "the focused grid row has no tiles yet"
+    focused = [tile for tile in tiles.findall("GridItem") if tile.get("focused") == "true"]
+    if len(focused) != 1:
+        return f"{len(focused)} tiles in the focused row claim focus"
+    title = focused[0].find("Label[@name='title']")
+    if title is None:
+        return "the focused tile has no title yet"
+    return int(grid.get("focusItem")), int(tiles.get("focusItem")), title.get("text")
+
+
+def wait_for_grid_focus(device: str, want: tuple[int, int, str]) -> None:
+    wait_for_ecp(lambda: grid_focus(device), want, "query/app-ui grid focus")
+
+
+def shown_screen(device: str, node: str, name: str):
+    """The screen node `node` named `name` from query/app-ui if it is visible and in the
+    focus chain, or why not."""
+    screen = ecp_xml(device, "query/app-ui").find(f".//{node}[@name='{name}']")
+    if screen is None:
+        return f"no {node} named {name!r}"
+    if screen.get("visible") == "false":
+        return f"the {name} screen is hidden"
+    if screen.get("focused") != "true":
+        return f"the {name} screen does not have focus"
+    return screen
+
+
+def details_title(device: str):
+    """The title the details screen shows, from query/app-ui, if that screen is visible and
+    has focus; or why there is none."""
+    screen = shown_screen(device, "DetailsScreen", "details")
+    if isinstance(screen, str):
+        return screen
+    title = screen.find(".//Label[@name='title']")
+    return "the details screen has no title yet" if title is None else title.get("text")
+
+
+def player_shown(device: str):
+    """`shown` while the player screen is visible and has focus, from query/app-ui; or why not."""
+    screen = shown_screen(device, "Video", "player")
+    return screen if isinstance(screen, str) else "shown"
 
 
 def test_ready(app: App, device: str):
@@ -327,21 +373,22 @@ def test_ready(app: App, device: str):
 
 def test_focus_moves_right_and_down(app: App, device: str):
     app.launch()
-    wait_for_ecp(lambda: grid_focus(device), (0, 0, "Morning Signal"), "query/app-ui grid focus")
+    wait_for_grid_focus(device, (0, 0, "Morning Signal"))
     app.press("Right")
     app.expect("focus", "screen=home row=0 col=1 item=feat-02")
-    wait_for_ecp(lambda: grid_focus(device), (0, 1, "Paper Harbour"), "query/app-ui grid focus")
+    wait_for_grid_focus(device, (0, 1, "Paper Harbour"))
     app.press("Down")
     app.expect("focus", "screen=home row=1 col=1 item=nat-02")
-    wait_for_ecp(lambda: grid_focus(device), (1, 1, "Tide Tables"), "query/app-ui grid focus")
+    wait_for_grid_focus(device, (1, 1, "Tide Tables"))
 
 
-def test_select_opens_details_for_the_focused_item(app: App):
+def test_select_opens_details_for_the_focused_item(app: App, device: str):
     app.launch()
     app.press("Right")
     app.expect("focus", "screen=home row=0 col=1 item=feat-02")
     app.press("Select")
     app.expect("open", "screen=details item=feat-02")
+    wait_for_ecp(lambda: details_title(device), "Paper Harbour", "query/app-ui details title")
 
 
 def test_play_reaches_playing(app: App, device: str):
@@ -351,6 +398,7 @@ def test_play_reaches_playing(app: App, device: str):
     app.press("Select")
     app.expect("open", "screen=player item=feat-01")
     app.expect_playing("feat-01")
+    wait_for_ecp(lambda: player_shown(device), "shown", "query/app-ui player screen")
     wait_for_ecp(lambda: media_player_state(device), "play", "ECP query/media-player state")
 
 
@@ -371,7 +419,7 @@ def test_back_returns_to_the_grid_with_the_same_item_focused(app: App, device: s
     app.press("Back")
     app.expect("open", "screen=home item=nat-02")
     app.expect("focus", "screen=home row=1 col=1 item=nat-02")
-    wait_for_ecp(lambda: grid_focus(device), (1, 1, "Tide Tables"), "query/app-ui grid focus")
+    wait_for_grid_focus(device, (1, 1, "Tide Tables"))
 
 
 if __name__ == "__main__":

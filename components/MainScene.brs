@@ -94,21 +94,21 @@ sub closePlayer()
 end sub
 
 function focusedGridItem() as Object
-    rc = gridFocus()
-    return m.home.content.GetChild(rc[0]).GetChild(rc[1])
+    position = gridFocus()
+    return m.home.content.GetChild(position[0]).GetChild(position[1])
 end function
 
 ' [row, col] of the focused tile; [0, 0] before the RowList has reported one.
 function gridFocus() as Object
-    rc = m.home.rowItemFocused
-    if rc = invalid or rc.Count() < 2 or rc[0] < 0 or rc[1] < 0 then return [0, 0]
-    return rc
+    position = m.home.rowItemFocused
+    if position = invalid or position.Count() < 2 or position[0] < 0 or position[1] < 0 then return [0, 0]
+    return position
 end function
 
 ' One focus line per change: the RowList can report the same position more than once.
 sub logGridFocus()
-    rc = gridFocus()
-    line = FocusLine(m.testTag, "home", rc[0], rc[1], focusedGridItem().id)
+    position = gridFocus()
+    line = FocusLine(m.testTag, "home", position[0], position[1], focusedGridItem().id)
     if line = m.lastFocusLine then return
     m.lastFocusLine = line
     testLog(line)
