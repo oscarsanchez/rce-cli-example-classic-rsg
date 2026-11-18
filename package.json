@@ -1,0 +1,12 @@
+{
+  "name": "rce-cli-example-classic-rsg-tests",
+  "private": true,
+  "description": "The Rooibos unit-test build only. The app itself builds with ./build.sh (zip).",
+  "scripts": {
+    "build:tests": "rm -rf build/unit-lib && mkdir -p build/unit-lib && cp components/lib/*.brs build/unit-lib/ && bsc --project bsconfig.tests.json"
+  },
+  "devDependencies": {
+    "brighterscript": "0.73.8",
+    "rooibos-roku": "5.17.0"
+  }
+}

@@ -1,0 +1,40 @@
+' Unit tests for components/lib/testlog.brs: the console lines the UI tests read
+' (README, "Console log lines"). The test build copies it to
+' source/lib, so these suites can call it (see bsconfig.tests.json).
+namespace tests
+
+    @suite("testlog")
+    class TestLogTests extends rooibos.BaseTestSuite
+
+        '+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+        @describe("console lines")
+        '+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+        @it("ready line without a tag")
+        function _()
+            m.assertEqual(ReadyLine(""), "sample: ready")
+        end function
+
+        @it("ready line with a tag")
+        function _()
+            m.assertEqual(ReadyLine("run1"), "sample: ready test=run1")
+        end function
+
+        @it("open line")
+        function _()
+            m.assertEqual(OpenLine("run1", "details", "nat-03"), "sample: open test=run1 screen=details item=nat-03")
+        end function
+
+        @it("focus line")
+        function _()
+            m.assertEqual(FocusLine("run1", "home", 1, 2, "nat-03"), "sample: focus test=run1 screen=home row=1 col=2 item=nat-03")
+        end function
+
+        @it("playback line")
+        function _()
+            m.assertEqual(PlaybackLine("run1", "playing", "nat-03"), "sample: playback test=run1 state=playing item=nat-03")
+        end function
+
+    end class
+
+end namespace
