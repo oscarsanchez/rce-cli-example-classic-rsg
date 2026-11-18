@@ -484,7 +484,10 @@ gh variable set RCE_DEVICE --repo "$repo" --body "$(rce device show player --jso
 gh variable set RCE_SNAPSHOT --repo "$repo" --body "$(rce snapshot list player --json | jq -r '.[] | select(.dev_snapshot) | .id')"
 rce device show player --dev-password 2>&1 | sed -n 's/^The Dev Password of .* is: //p' | gh secret set RCE_DEV_PASSWORD --repo "$repo"
 gh secret set RCE_TOKEN --repo "$repo"          # asks for it: paste the pipeline's token
+gh secret set RCE_CLI_READ_TOKEN --repo "$repo" # only while rce-cli is private: see below
 ```
+
+While `rce-cli` is private, the Install step can't download `bin/rce` without a token: `RCE_CLI_READ_TOKEN` is a fine-grained GitHub token with read-only Contents access to `oscarsanchez/rce-cli` and nothing else. Once `rce-cli` is public, skip it.
 
 The variables are the Cloud Device's RCE id and its Dev Snapshot's id: a runner has no per-user config, so it addresses both by id. The third line pipes the Dev Password from `rce`'s stderr straight into the secret, so it is never printed; `gh secret set` without `--body` asks for the token without echoing it.
 
@@ -498,7 +501,7 @@ The Run, from start to stop, is about 3 device-minutes, about one cent (see [Cos
 
 ### This repo's pipeline is a demo
 
-This repo runs the pipeline on the maintainer's Cloud Device `auto`. After its first green run is recorded, the maintainer revokes the `ci` token and deletes this repo's `RCE_TOKEN` and `RCE_DEV_PASSWORD` secrets: the repo keeps showing the workflow and its past runs, but a new run can start nothing: without a token its start fails. To run it yourself, set it up in your own copy, as above.
+This repo runs the pipeline on the maintainer's Cloud Device `auto`. After its first green run is recorded, the maintainer revokes the `ci` token and deletes this repo's `RCE_TOKEN` and `RCE_DEV_PASSWORD` secrets (and `RCE_CLI_READ_TOKEN` once `rce-cli` is public): the repo keeps showing the workflow and its past runs, but a new run can start nothing: without a token its start fails. To run it yourself, set it up in your own copy, as above.
 
 ## Costs
 

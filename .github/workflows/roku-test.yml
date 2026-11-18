@@ -33,9 +33,18 @@ jobs:
           node-version: 22
           cache: npm
       - name: Install rce
+        env:
+          # rce-cli is private until it's published: a read-only token for it, if set.
+          # Once rce-cli is public, delete the secret; the plain download works.
+          RCE_CLI_READ_TOKEN: ${{ secrets.RCE_CLI_READ_TOKEN }}
         run: |
           mkdir -p "$RUNNER_TEMP/bin"
-          curl -fsSL -o "$RUNNER_TEMP/bin/rce" https://raw.githubusercontent.com/oscarsanchez/rce-cli/v0.1.0-rc.1/bin/rce
+          url=https://raw.githubusercontent.com/oscarsanchez/rce-cli/v0.1.0-rc.1/bin/rce
+          if [ -n "$RCE_CLI_READ_TOKEN" ]; then
+            curl -fsSL -H "Authorization: Bearer $RCE_CLI_READ_TOKEN" -o "$RUNNER_TEMP/bin/rce" "$url"
+          else
+            curl -fsSL -o "$RUNNER_TEMP/bin/rce" "$url"
+          fi
           chmod +x "$RUNNER_TEMP/bin/rce"
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
       - name: Build the app and the unit tests
