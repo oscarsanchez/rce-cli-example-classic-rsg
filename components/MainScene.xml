@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!-- The app's one Scene: owns the three screens, moves between them, and prints the console lines. -->
+<component name="MainScene" extends="Scene">
+    <script type="text/brightscript" uri="pkg:/components/MainScene.brs" />
+    <script type="text/brightscript" uri="pkg:/components/lib/catalog.brs" />
+    <script type="text/brightscript" uri="pkg:/components/lib/testlog.brs" />
+    <children>
+        <HomeScreen id="home" />
+        <DetailsScreen id="details" visible="false" />
+        <Video id="player" width="1920" height="1080" visible="false" />
+    </children>
+</component>

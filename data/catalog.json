@@ -1,0 +1,41 @@
+{
+  "stream": {
+    "url": "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
+    "format": "hls"
+  },
+  "rows": [
+    {
+      "title": "Featured",
+      "color": "0x2E5E8CFF",
+      "items": [
+        {"id": "feat-01", "title": "Morning Signal", "description": "A radio tower keeps broadcasting long after the town below has gone quiet.", "durationSeconds": 596},
+        {"id": "feat-02", "title": "Paper Harbour", "description": "Two friends fold a fleet of paper boats and race them to the sea.", "durationSeconds": 734},
+        {"id": "feat-03", "title": "The Last Lift", "description": "A ski-lift operator's final shift before the mountain closes for summer.", "durationSeconds": 1215},
+        {"id": "feat-04", "title": "Night Market", "description": "One evening among the stalls, lamps and noodle steam of a street market.", "durationSeconds": 2710},
+        {"id": "feat-05", "title": "Static", "description": "A repair shop owner finds a message hidden in an old television's hiss.", "durationSeconds": 3725}
+      ]
+    },
+    {
+      "title": "Nature",
+      "color": "0x2F7A4FFF",
+      "items": [
+        {"id": "nat-01", "title": "Moss Country", "description": "The small world under a forest floor, filmed one square metre at a time.", "durationSeconds": 1520},
+        {"id": "nat-02", "title": "Tide Tables", "description": "A year of tides on one rocky beach, and the creatures that wait for them.", "durationSeconds": 2245},
+        {"id": "nat-03", "title": "High Meadow", "description": "Spring arrives late on an alpine meadow and everything happens at once.", "durationSeconds": 1810},
+        {"id": "nat-04", "title": "River Days", "description": "Following a single leaf from a mountain spring to the river mouth.", "durationSeconds": 965},
+        {"id": "nat-05", "title": "Owl Hours", "description": "What a barn owl sees between dusk and dawn.", "durationSeconds": 1330}
+      ]
+    },
+    {
+      "title": "City",
+      "color": "0x8C4A2EFF",
+      "items": [
+        {"id": "city-01", "title": "Rush Hour", "description": "A city's morning commute, timed to the second.", "durationSeconds": 642},
+        {"id": "city-02", "title": "Rooftops", "description": "Gardens, water towers and pigeons: the city one storey up.", "durationSeconds": 1475},
+        {"id": "city-03", "title": "Last Train", "description": "Passengers on the final train of the night, and where they are going.", "durationSeconds": 2030},
+        {"id": "city-04", "title": "Neon", "description": "The sign makers who still bend glass by hand.", "durationSeconds": 1155},
+        {"id": "city-05", "title": "Bridges", "description": "Seven bridges, seven crossings, one long walk.", "durationSeconds": 3600}
+      ]
+    }
+  ]
+}

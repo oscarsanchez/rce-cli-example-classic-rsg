@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!-- Details: title, duration, description and a Play button. -->
+<component name="DetailsScreen" extends="Group">
+    <interface>
+        <field id="content" type="node" onChange="onContent" />
+        <field id="playSelected" type="boolean" alwaysNotify="true" />
+    </interface>
+    <script type="text/brightscript" uri="pkg:/components/DetailsScreen.brs" />
+    <script type="text/brightscript" uri="pkg:/components/lib/catalog.brs" />
+    <children>
+        <Rectangle id="art" translation="[96,150]" width="672" height="378" />
+        <Label id="title" translation="[832,150]" width="992" font="font:LargeBoldSystemFont" />
+        <Label id="duration" translation="[832,224]" width="992" />
+        <Label id="description" translation="[832,284]" width="992" wrap="true" maxLines="5" />
+        <ButtonGroup id="buttons" translation="[832,478]" />
+    </children>
+</component>

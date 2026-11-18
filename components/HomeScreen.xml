@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!-- Home: a RowList of the catalog's rows. -->
+<component name="HomeScreen" extends="Group">
+    <interface>
+        <field id="content" type="node" alias="grid.content" />
+        <field id="rowItemFocused" type="intarray" alias="grid.rowItemFocused" />
+        <field id="rowItemSelected" type="intarray" alias="grid.rowItemSelected" />
+    </interface>
+    <script type="text/brightscript" uri="pkg:/components/HomeScreen.brs" />
+    <children>
+        <Label text="RCE Sample" translation="[96,56]" font="font:LargeBoldSystemFont" />
+        <RowList
+            id="grid"
+            translation="[96,150]"
+            itemComponentName="GridItem"
+            numRows="3"
+            itemSize="[1728,290]"
+            itemSpacing="[0,20]"
+            rowItemSize="[[336,189]]"
+            rowItemSpacing="[[30,0]]"
+            showRowLabel="[true]"
+            rowFocusAnimationStyle="floatingFocus"
+            vertFocusAnimationStyle="floatingFocus" />
+    </children>
+</component>
