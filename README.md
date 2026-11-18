@@ -32,6 +32,8 @@ bsconfig.tests.json          the unit tests' build: BrighterScript and the Rooib
 package.json                 pins brighterscript and rooibos-roku, and runs that build
 tests/test_app.py            runs the unit tests, then the UI tests: pytest, run as a uv script
 .github/workflows/roku-test.yml  the pipeline: both kinds of test on a Cloud Device in GitHub Actions
+scripts/check                the offline check: both builds and the workflow lint, no Cloud Device
+.github/workflows/check.yml  runs scripts/check on every push and pull request, free
 ```
 
 The catalog is made up and bundled with the app, so there is no backend. Every item plays the same stream, Big Buck Bunny.
@@ -523,6 +525,10 @@ This repo runs the pipeline on the maintainer's Cloud Device `auto`. After its f
 A Run costs $0.20 per hour, billed by the minute from the moment `rce device start` asks for it, and RCE has no idle stop: it bills until you stop it or it reaches its cap. `--max-runtime` sets the cap (the default is 3600 s). The RCE trial gives 600 free minutes and allows one Run at a time across the organisation.
 
 The loop above, run start to stop without pauses, takes about 3 device-minutes, about one cent. Every walkthrough ends with `rce device stop` and `rce device list --running`; `rce device status player` shows a Run's elapsed cost and `rce usage` the minutes used. Details: `rce-cli`'s [Costs](https://github.com/oscarsanchez/rce-cli#costs).
+
+## Contributing
+
+Before you push, run `scripts/check`: both builds (failing on any BrighterScript diagnostic), the workflow lint, and the test suite's refusal without `RCE_DEVICE`. It needs Node and uv, starts no Run and costs nothing; the `check` workflow runs it on every push and pull request.
 
 ## Credits
 

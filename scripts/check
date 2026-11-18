@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# The offline check: both builds, the workflow lint, and the test suite's refusal
+# without a Cloud Device. Starts no Run and calls no rce. CI runs it on every push.
+set -euo pipefail
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+
+echo "== app build"
+./build.sh
+
+echo "== unit-test build"
+npm ci --no-audit --no-fund
+log="$(mktemp)"
+trap 'rm -f "$log"; rm -rf tests/__pycache__' EXIT
+npm run --silent build:tests 2>&1 | tee "$log"
+# bsc exits 0 on warnings; any diagnostic fails the check.
+if grep -qE ' - (error|warning) BS[0-9]+:' "$log"; then
+    echo "check: BrighterScript reported diagnostics" >&2
+    exit 1
+fi
+
+echo "== workflow lint"
+if command -v actionlint >/dev/null; then
+    actionlint
+else
+    echo "actionlint not on PATH: parsing the YAML only"
+    uv run --quiet --no-project --with pyyaml python -c \
+        'import sys, yaml; [yaml.safe_load(open(f)) for f in sys.argv[1:]]' .github/workflows/*.yml
+fi
+
+echo "== test suite refuses to start without RCE_DEVICE"
+status=0
+out="$(env -u RCE_DEVICE uv run --quiet tests/test_app.py 2>&1)" || status=$?
+# Exit 2 alone could be uv's own error: the refusal's message must be there too.
+if [ "$status" -ne 2 ] || ! grep -q 'set RCE_DEVICE' <<<"$out"; then
+    echo "$out" >&2
+    echo "check: tests/test_app.py without RCE_DEVICE exited $status, expected 2 and its refusal" >&2
+    exit 1
+fi
+
+echo "check: all green"
