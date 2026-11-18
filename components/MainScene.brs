@@ -64,7 +64,10 @@ sub onGridFocused()
 end sub
 
 sub onGridSelected()
-    m.item = focusedGridItem()
+    item = focusedGridItem()
+    ' Launched with `--param stop=1`: break into the BrightScript debugger (console, port 8085).
+    if m.global.stopOnSelect then stop
+    m.item = item
     m.details.content = m.item
     showScreen("details")
 end sub
