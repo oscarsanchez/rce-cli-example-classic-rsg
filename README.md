@@ -11,7 +11,7 @@ Licence: [MIT](LICENSE) for the code. The video is not part of this repo; see [C
 - macOS or Linux, with `zip` (preinstalled on macOS).
 - `rce` installed, an RCE token set, and a Cloud Device set up for development. Follow `rce-cli`'s [Getting started](https://github.com/oscarsanchez/rce-cli#getting-started): it covers the token, creating or naming a Cloud Device, and `rce device setup-dev`, which gives it developer mode, a Dev Password and a Dev Snapshot. The examples below call that Cloud Device `player`; use your own Device Name.
 
-There is no SDK, Node or build tool to install: the app is plain BrightScript and SceneGraph XML.
+There is no SDK, Node or build tool to install: the app is plain BrightScript and SceneGraph XML. The UI tests need [uv](https://docs.astral.sh/uv/), which fetches Python and pytest for them.
 
 ## What's in it
 
@@ -27,6 +27,7 @@ components/lib/testlog.brs   the console lines' text: plain functions, no nodes
 data/catalog.json            the bundled catalog: three rows of five items
 images/icon_focus_hd.png     the app icon
 build.sh                     builds build/app.zip
+tests/test_app.py            the UI tests: pytest, run as a uv script
 ```
 
 The catalog is made up and bundled with the app, so there is no backend. Every item plays the same stream, Big Buck Bunny.
@@ -120,6 +121,44 @@ sample: playback test=run1 state=playing item=nat-03
 ```
 
 These lines are the contract between the app and anything that drives it, such as UI tests: change their format and you change those too. The text is built in `components/lib/testlog.brs`. Without the `test` param the app prints only `sample: ready` (or, if the bundled catalog can't be read, a line saying so instead).
+
+## UI tests
+
+`tests/test_app.py` drives the app on a Cloud Device and checks its main paths: it reaches ready with the dev app in front, focus moves right and down on the grid, Select opens details for the focused tile, Play reaches playing, and Back (from the player, then from details) returns to the grid with the same tile focused. It is a pytest file run as a uv script, its dependencies inline, and it talks to the device only through `rce ... --json`.
+
+Run it against your own Cloud Device:
+
+```sh
+./build.sh
+rce device start player --max-runtime 900       # the tests need a Run going; they start and stop none
+RCE_DEVICE=player uv run tests/test_app.py      # or ./tests/test_app.py; takes about a minute
+rce device stop player
+rce device list --running
+```
+
+`RCE_DEVICE` is a Device Name or an RCE id. Other arguments go to pytest, for example `-k focus` or `-x`. The exit code is pytest's: 0 when every test passed, 1 when one failed, 2 when the suite refused to start (no `RCE_DEVICE`, no `build/app.zip`, or no Run going). It writes, under `test-results/` (not committed):
+
+- `junit.xml`, the JUnit report;
+- `console.log`, every console line the session saw;
+- `screenshots/<test name>.jpg`, the screen at the end of each test, pass or fail.
+
+While it runs, leave the device alone: close your own `rce console` first (a device takes one console client, and the suite holds it for the whole session) and press no keys.
+
+How a test decides:
+
+- **Console lines first.** The suite opens one console stream before anything launches and keeps every line, so a line printed between a key press and the wait for it is not missed. Each test relaunches the app with a new `test` tag (launching restarts it), so a line replayed from earlier can't match, and checks the app's next tagged lines one by one, in order, against the [Console log lines](#console-log-lines). Every wait has a timeout and fails on it, with the last console lines in the message. A BrightScript crash line (`runtime error`, the Micro Debugger) fails the test at once.
+- **ECP as a second signal.** `query/active-app` must name the dev app; on Play, `query/media-player` must reach `state="play"`; and on the grid, `query/app-ui` must agree with the focus line (below).
+- **Screenshots are evidence only.** A failed or missing screenshot is a warning; no test passes or fails on one.
+
+`query/app-ui` on RCE: RCE serves it (checked on a Cloud Device in November 2026): the app's SceneGraph tree, about 235 lines for this app. The grid's focus reads from it like this, and the focus tests check it:
+
+- the RowList named `grid` has `focused="true"` only while it holds real focus (on details it is absent), and its `focusItem` is the focused row;
+- every row's MarkupGrid flags a tile `focused="true"` of its own, so read the column (its `focusItem`) and the tile's title only from the one row node (`RowListItem`) in the focus chain, the one with `focused="true"`;
+- an attribute at its default value is left out, so a missing `focused` means false.
+
+A wrong expectation fails with what was expected and what came instead, for example `expected the console line 'sample: focus test=t8ec16e70 screen=home row=1 col=2 item=nat-03', got '... row=1 col=1 item=nat-02'` or `expected query/app-ui grid focus to be (1, 2, 'Tide Tables') within 15 s, last answer (1, 1, 'Tide Tables')`.
+
+Cost: a Run from start to stop around the suite is about 3 device-minutes, about one cent.
 
 ## Costs
 
