@@ -380,9 +380,55 @@ What Claude does and asks, from the skill:
 
 A conversation like the list above needs about 5 device-minutes, under two cents, plus however long the Run waits between your prompts: RCE bills until the stop, whether or not anything is happening. End with "stop the Run", and check `rce device list --running` yourself.
 
-### The VS Code BrightScript debugger
+### The VS Code debugger
 
-The VS Code BrightScript debugger (the BrightScript Language extension's roku-debug) does not work through `rce` yet. It installs the app over the device's port 80 and launches it over ECP on port 8060. On RCE those ports are reached only through RCE's API, as HTTP, so `rce forward` refuses them (`rce sideload` and `rce ecp` are the way to reach them). Until that changes, use `rce sideload` and `rce launch`, and the console debugger above. A tracking ticket covers local HTTP forwarding for ports 80 and 8060; it isn't public yet, and this README will link to it when it is.
+The [BrightScript Language](https://marketplace.visualstudio.com/items?itemName=RokuCommunity.brightscript) extension for VS Code (3.0 or later, with roku-debug 0.24 or later) debugs an app on a Cloud Device through its own RCE support: breakpoints, stepping, variables and the app's console in VS Code. It reaches the device through RCE itself, so it needs no `rce forward`. `rce` starts and stops the Run:
+
+```sh
+rce device start player --max-runtime 900       # about 80 s; billing starts now, capped at 15 min
+rce device list                                 # the RCE id of player, for launch.json
+```
+
+Add this configuration to `.vscode/launch.json`:
+
+```jsonc
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "brightscript",
+            "request": "launch",
+            "name": "RCE: player",
+            "device": { "id": 123 },            // your Cloud Device's RCE id from `rce device list`
+            "password": "${promptForPassword}", // the Dev Password: `rce device show player --dev-password`
+            "rootDir": "${workspaceFolder}",
+            "files": ["manifest", "source/**/*", "components/**/*", "data/**/*", "images/**/*"],
+            "enableDebugProtocol": true,
+            "stopOnEntry": false
+        }
+    ]
+}
+```
+
+`files` lists `data/**/*` because the extension's default leaves out `data/catalog.json`; without it the app prints `sample: pkg:/data/catalog.json is not a valid catalog` and shows no grid. The extension builds and installs the app itself, so skip `./build.sh` and `rce sideload` here.
+
+The extension needs an RCE token of its own: it does not read `rce`'s. Add a Cloud Emulator account in the extension (it keeps the token in VS Code's secret storage), or start VS Code with `ROKU_RCE_TOKEN` set in its environment. With neither, the session stops with "no Cloud Emulator account is configured". `launch.json` has no token field.
+
+Press F5 and type the Dev Password. Set a breakpoint on the first line of `onGridSelected` in `components/MainScene.brs`, then press OK on a tile (`rce key player Select`): the app stops there, and VS Code shows the stack and the locals. Step over the next line and `item` holds the tile's content (`item.id` is `"feat-01"` on the first tile).
+
+Two cautions:
+
+- The extension's Cloud Emulator panel can start and stop Runs itself. Those Runs are billed like any other, but `rce` doesn't know about them: its device lock doesn't cover them, and the trial's limit of one Run at a time across the organisation still applies. Start and stop Runs with `rce` and check `rce device list --running` at the end.
+- roku-debug's log output (the debug server output in VS Code) can contain the RCE token and the Dev Password. Never paste it into an issue or a chat.
+
+Then stop the debug session, and the Run:
+
+```sh
+rce device stop player                          # billing ends here
+rce device list --running                       # "No running Cloud Devices."
+```
+
+A session like this, start to stop, is about 3 device-minutes, about one cent (see [Costs](#costs)).
 
 ## Unit tests
 
