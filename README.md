@@ -8,7 +8,7 @@ Licence: [MIT](LICENSE) for the code. The video is not part of this repo; see [C
 
 ## Prerequisites
 
-- macOS or Linux, with `zip` (preinstalled on macOS).
+- macOS or Linux, with `zip` (preinstalled on macOS) and [`jq`](https://jqlang.org/) (used below to read `rce --json` output).
 - `rce` installed, an RCE token set, and a Cloud Device set up for development. Follow `rce-cli`'s [Getting started](https://github.com/oscarsanchez/rce-cli#getting-started): it covers the token, creating or naming a Cloud Device, and `rce device setup-dev`, which gives it developer mode, a Dev Password and a Dev Snapshot. The examples below call that Cloud Device `player`; use your own Device Name.
 
 There is no SDK, Node or build tool to install for the app: it is plain BrightScript and SceneGraph XML. The tests need two more things: [Node](https://nodejs.org/) (a current LTS; checked with 22) for the unit tests' build only, and [uv](https://docs.astral.sh/uv/), which fetches Python and pytest for the test run.
@@ -48,17 +48,22 @@ It is one `zip` of `manifest`, `source`, `components`, `data` and `images`. `bui
 
 ## The everyday loop
 
-In a second terminal, connect the console before the app starts, and leave it running:
+Start a Run:
+
+```sh
+./build.sh
+rce device start player --max-runtime 1800      # waits until it takes input (about 80 s); billing starts now
+```
+
+In a second terminal, connect the console before the app starts, and leave it running (`rce console` needs a Run going: it exits 4 without one):
 
 ```sh
 rce console player --strip-ansi                 # every console line as it arrives; Ctrl-C to quit
 ```
 
-Then:
+Then, back in the first terminal:
 
 ```sh
-./build.sh
-rce device start player --max-runtime 1800      # waits until it takes input (about 80 s); billing starts now
 rce sideload player build/app.zip               # installs and starts the app; the console prints "sample: ready"
 rce launch player --param test=run1             # restarts it with test logging on: "sample: ready test=run1"
 rce key player Right Down Select --delay 1000   # move focus, open details; the console prints focus and open lines
@@ -371,7 +376,7 @@ What Claude does and asks, from the skill:
 - It claims something worked only from the device's evidence: a console line it waited for, an ECP answer, or a screenshot it looked at.
 - The plugin's Stop hook warns at the end of each Claude turn if any Run is still billing.
 
-A session like the list above needs about 5 device-minutes, under two cents, plus however long the Run waits between your prompts: RCE bills until the stop, whether or not anything is happening. End with "stop the Run", and check `rce device list --running` yourself.
+A conversation like the list above needs about 5 device-minutes, under two cents, plus however long the Run waits between your prompts: RCE bills until the stop, whether or not anything is happening. End with "stop the Run", and check `rce device list --running` yourself.
 
 ### The VS Code BrightScript debugger
 
@@ -402,7 +407,17 @@ Sideloading the test build starts it, and Rooibos prints a report to the console
 [Rooibos Shutdown]
 ```
 
-`[Rooibos Result]: FAIL` means a test failed or crashed. In the report, a failed test's line ends in `FAIL` (or `CRASH`), followed by where the assertion failed and its message. To try it by hand: `rce console player --strip-ansi` in one terminal, `rce sideload player build/tests.zip` in another.
+`[Rooibos Result]: FAIL` means a test failed or crashed. In the report, a failed test's line ends in `FAIL` (or `CRASH`), followed by where the assertion failed and its message. To try it by hand:
+
+```sh
+rce device start player --max-runtime 900       # about 80 s; billing starts now
+rce console player --strip-ansi                 # in a second terminal: stream until Ctrl-C
+rce sideload player build/tests.zip             # back in the first: installs and starts the test build
+rce device stop player                          # once the console shows [Rooibos Result]; billing ends here
+rce device list --running                       # "No running Cloud Devices."
+```
+
+About 2 device-minutes.
 
 The test run below runs them for you, first.
 
@@ -436,23 +451,23 @@ Rooibos shortens long values in its messages (the `…`); the line numbers point
 `RCE_DEVICE` is a Device Name or an RCE id. Other arguments go to pytest, for example `-k unit_tests`, `-k focus` or `-x`. The exit code is pytest's: 0 when every test passed, 1 when one failed, 2 when the suite refused to start (no `RCE_DEVICE`, no `build/tests.zip` or `build/app.zip`, or no Run going). It writes, under `test-results/` (not committed):
 
 - `junit.xml`, one JUnit report for the unit tests (as one test case) and the UI tests;
-- `console.log`, every console line the session saw;
+- `console.log`, every console line the test run saw;
 - `tests-<tag>.zip`, the tagged copy of the test build it sideloaded;
 - `screenshots/<test name>.jpg`, the screen at the end of each test, pass or fail.
 
-While it runs, leave the device alone: close your own `rce console` first (a device takes one console client, and the suite holds it for the whole session) and press no keys.
+While it runs, leave the device alone: close your own `rce console` first (a device takes one console client, and the suite holds it for the whole test run) and press no keys.
 
 How a test decides:
 
 - **Console lines first.** The suite opens one console stream before anything launches and keeps every line, so a line printed between a key press and the wait for it is not missed. Each test relaunches the app with a new `test` tag (launching restarts it), so a line replayed from earlier can't match, and checks the app's next tagged lines one by one, in order, against the [Console log lines](#console-log-lines). Every wait has a timeout and fails on it, with the last console lines in the message. A BrightScript crash line (`runtime error`, the Micro Debugger) fails the test at once.
-- **ECP as a second signal.** `query/active-app` must name the dev app; on Play, `query/media-player` must reach `state="play"`; and on the grid, `query/app-ui` must agree with the focus line (below).
+- **ECP as a second signal.** `query/active-app` must name the dev app; on the grid, `query/app-ui` must agree with the focus line (below); on details, `query/app-ui` must show the details screen, visible and focused, with the focused tile's title; on Play, it must show the player screen, visible and focused, and `query/media-player` must reach `state="play"`. A node missing or not yet focused mid-transition is asked again until the timeout.
 - **Screenshots are evidence only.** A failed or missing screenshot is a warning; no test passes or fails on one.
 
 `query/app-ui` on RCE: RCE serves it (checked on a Cloud Device in November 2026): the app's SceneGraph tree, about 235 lines for this app. The grid's focus reads from it like this, and the focus tests check it:
 
 - the RowList named `grid` has `focused="true"` only while it holds real focus (on details it is absent), and its `focusItem` is the focused row;
 - every row's MarkupGrid flags a tile `focused="true"` of its own, so read the column (its `focusItem`) and the tile's title only from the one row node (`RowListItem`) in the focus chain, the one with `focused="true"`;
-- an attribute at its default value is left out, so a missing `focused` means false.
+- an attribute at its default value is left out, so a missing `focused` means false and a missing `visible` means true.
 
 A wrong expectation fails with what was expected and what came instead, for example `expected the console line 'sample: focus test=t8ec16e70 screen=home row=1 col=2 item=nat-03', got '... row=1 col=1 item=nat-02'` or `expected query/app-ui grid focus to be (1, 2, 'Tide Tables') within 15 s, last answer (1, 1, 'Tide Tables')`.
 
@@ -465,7 +480,7 @@ Cost: a Run from start to stop around the suite is about 3 device-minutes, about
 - **On demand:** Actions > roku-test > Run workflow, or `gh workflow run roku-test.yml`.
 - **On a pull request labelled `roku-test`:** when the label is added, and again on each push to the PR while it has the label. A PR without the label runs nothing.
 
-One job, in order: checkout, uv and Node, `bin/rce` downloaded at a pinned `rce-cli` tag (as in `rce-cli`'s [Pipelines](https://github.com/oscarsanchez/rce-cli#pipelines-cicd) recipe), both builds, a Run started from the Dev Snapshot, `uv run tests/test_app.py`, the stop, then the artifacts and the summary.
+One job, in order: a check that the `RCE_DEVICE` and `RCE_SNAPSHOT` variables are set (it fails before any `rce` call if not), checkout, uv and Node (each action pinned to a commit SHA, its version tag in a comment), `bin/rce` downloaded at a pinned `rce-cli` tag (as in `rce-cli`'s [Pipelines](https://github.com/oscarsanchez/rce-cli#pipelines-cicd) recipe), both builds, a Run started from the Dev Snapshot, `uv run tests/test_app.py`, the stop, then the artifacts and the summary.
 
 - **Results without reading logs:** the job summary shows the passed, failed and skipped counts and each failed test's first message line. The `test-results` artifact holds `junit.xml`, `console.log` and `screenshots/`, uploaded whether the tests passed or not.
 - **The stop is guarded,** as in the recipe: it runs once the start step has run, even after a failed test or a cancelled job, and skips when RCE refused the start (exit 4), because then the Run on the Cloud Device, if any, is someone else's.

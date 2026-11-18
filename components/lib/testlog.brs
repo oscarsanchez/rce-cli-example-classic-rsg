@@ -4,17 +4,22 @@
 
 function ReadyLine(tag as String) as String
     if tag = "" then return "sample: ready"
-    return "sample: ready test=" + tag
+    return lineStart("ready", tag)
 end function
 
 function OpenLine(tag as String, screen as String, itemId as String) as String
-    return "sample: open test=" + tag + " screen=" + screen + " item=" + itemId
+    return lineStart("open", tag) + " screen=" + screen + " item=" + itemId
 end function
 
 function FocusLine(tag as String, screen as String, row as Integer, col as Integer, itemId as String) as String
-    return "sample: focus test=" + tag + " screen=" + screen + " row=" + row.ToStr() + " col=" + col.ToStr() + " item=" + itemId
+    return lineStart("focus", tag) + " screen=" + screen + " row=" + row.ToStr() + " col=" + col.ToStr() + " item=" + itemId
 end function
 
 function PlaybackLine(tag as String, state as String, itemId as String) as String
-    return "sample: playback test=" + tag + " state=" + state + " item=" + itemId
+    return lineStart("playback", tag) + " state=" + state + " item=" + itemId
+end function
+
+' Every tagged line starts "sample: <event> test=<tag>".
+function lineStart(event as String, tag as String) as String
+    return "sample: " + event + " test=" + tag
 end function
