@@ -17,7 +17,7 @@ There is no SDK, Node or build tool to install: the app is plain BrightScript an
 
 ```
 manifest
-source/main.brs              entry point: reads the `test` launch param, shows MainScene
+source/main.brs              entry point: reads the `test` and `stop` launch params, shows MainScene
 components/MainScene.*       moves between the screens, handles Back, prints the console lines
 components/HomeScreen.*      the grid: a RowList of the catalog's rows
 components/GridItem.*        one grid tile
@@ -120,6 +120,257 @@ sample: playback test=run1 state=playing item=nat-03
 ```
 
 These lines are the contract between the app and anything that drives it, such as UI tests: change their format and you change those too. The text is built in `components/lib/testlog.brs`. Without the `test` param the app prints only `sample: ready` (or, if the bundled catalog can't be read, a line saying so instead).
+
+## Debugging
+
+Each walkthrough below stands on its own: it starts a Run, sideloads the app, and ends with a stop and a check that nothing is left billing. Do several in one Run if you like, and stop it when you're done.
+
+Every walkthrough starts the same way:
+
+```sh
+./build.sh
+rce device start player --max-runtime 900       # about 80 s; billing starts now, capped at 15 min
+rce sideload player build/app.zip
+```
+
+and ends the same way:
+
+```sh
+rce device stop player                          # billing ends here
+rce device list --running                       # "No running Cloud Devices."
+```
+
+A Run costs $0.20 per hour, about a third of a cent per minute (see [Costs](#costs)). Each walkthrough takes 2 to 5 minutes start to stop, one or two cents. Scripted, all of them together took about 2 minutes in one Run.
+
+### The console
+
+`rce console` streams the BrightScript console (device port 8085): the app's `print` output, compile and runtime errors with the file and line, and the lines Roku OS prints when an app starts and exits. It shows what the app prints after it connects, and when it connects it can replay some earlier output first, so connect before you sideload or launch.
+
+```sh
+rce console player --strip-ansi                 # in a second terminal: stream until Ctrl-C
+```
+
+In a script, wait for one line instead, with a timeout:
+
+```sh
+rce console player --until 'sample: ready test=dbg1' --timeout 120 --strip-ansi &   # connect first
+rce launch player --param test=dbg1
+wait                                            # exits 0 on the line, 5 on timeout
+```
+
+Use a new `test` tag for each launch, so a replayed line from an earlier launch can't match. `--json` prints one JSON object per line, for scripts. See [Console log lines](#console-log-lines) for what the app prints.
+
+`rce console` only reads. When the app stops in the debugger it prints where it stopped, the backtrace and the variables, but not the prompt, and you can't type commands into it: for that, use `nc`, below.
+
+Then stop: `rce device stop player`, `rce device list --running`. About 2 device-minutes.
+
+### The BrightScript debugger
+
+The BrightScript debugger runs in the console: when the app reaches a `stop` statement or a runtime error, the console prints where it stopped and waits for commands at a `Brightscript Debugger>` prompt. `rce forward` puts the device's console port on your machine, and `nc` lets you type at it.
+
+The app has a `stop` you can turn on: launched with the `stop` launch param set to `1`, it breaks into the debugger when you press OK on a tile, just before it opens the details screen (`components/MainScene.brs`, `onGridSelected`). It is off by default, and it changes none of the [console log lines](#console-log-lines).
+
+The device takes one console client at a time, so quit any `rce console` first (Ctrl-C); otherwise `nc` gets `Console connection is already in use.` and is hung up. If the app stopped while `rce console` was streaming, quit it and connect `nc`: the debugger is still waiting at its prompt. Then:
+
+```sh
+rce forward player 8085 &                       # 127.0.0.1:8085 now reaches the device's console
+nc 127.0.0.1 8085                               # the console, now one you can type at
+```
+
+In another terminal:
+
+```sh
+rce launch player --param test=dbg2 --param stop=1
+rce key player Select                           # OK on the first tile: the app stops
+```
+
+`nc` shows where it stopped, with the backtrace, the local variables and the threads:
+
+```
+BrightScript Micro Debugger.
+Enter any BrightScript statement, debug commands, or HELP.
+
+Suspending threads...
+
+Current Function:
+066:  sub onGridSelected()
+067:      item = focusedGridItem()
+068:      ' Launched with `--param stop=1`: break into the BrightScript debugger (console, port 8085).
+069:*     if m.global.stopOnSelect then stop
+070:      m.item = item
+071:      m.details.content = m.item
+072:      showScreen("details")
+073:  end sub
+...
+STOP (runtime error &hf7) in pkg:/components/MainScene.brs(69)
+Backtrace:
+#0  Function ongridselected() As Void
+   file/line: pkg:/components/MainScene.brs(70)
+Local Variables:
+global           Interface:ifGlobal
+m                roAssociativeArray refcnt=2 count:9
+item             roSGNode:ContentNode refcnt=1
+Threads:
+ID    Location                                Source Code
+ 0    pkg:/source/main.brs(20)                       msg = Wait(0, port)
+ 1*   pkg:/components/MainScene.brs(69)          if m.global.stopOnSelect then stop
+  *selected
+```
+
+"runtime error &hf7" is how Roku OS reports a `stop` statement; it is not a crash. Type at the prompt:
+
+| Type | What it does |
+|---|---|
+| `bt` | the backtrace again |
+| `var` | the local variables and their types |
+| `print item.id` (or `? item.id`) | any variable or expression: here `feat-01`, the focused tile's id |
+| `print item.title` | `Morning Signal` |
+| `step`, `over`, `out` | step one statement, over a call, out of the function |
+| `threads` | every thread and where it is suspended |
+| `c` | continue: the app opens the details screen and prints `sample: open ... screen=details` |
+
+`help` lists the rest; Roku's [Debugging](https://developer.roku.com/dev/docs/debugging) page explains each. A runtime error in your own code stops at the same prompt, with the same commands. Pressing Ctrl-C quits `nc`; it doesn't break into the app the way it does in `telnet`, so use a `stop` to break where you want.
+
+When you're done, quit `nc` (Ctrl-C) and the forward (`kill %1`, or Ctrl-C if it runs in its own terminal). Then stop: `rce device stop player`, `rce device list --running`. About 3 device-minutes.
+
+#### From a script
+
+`nc` reads what you type from its standard input, so a script can feed it through a named pipe and read its output from a file. The pipe stays open (file descriptor 3) until the script closes it, so `nc` keeps the connection open between commands:
+
+```sh
+tag=dbg3                                        # a new tag for each launch
+# What nc printed since this launch's ready line: on connecting, the console can replay older output.
+since_ready() { sed -n "/sample: ready test=$tag/,\$p" debugger.log; }
+waitfor() { for _ in $(seq 60); do since_ready | grep -q "$1" && return 0; sleep 1; done; echo "timed out: $1" >&2; return 1; }
+
+rce forward player 8085 > forward.log & fwd=$!
+for _ in $(seq 20); do grep -q Forwarding forward.log && break; sleep 1; done
+mkfifo debugger.in
+nc 127.0.0.1 8085 < debugger.in > debugger.log & nc=$!
+exec 3> debugger.in                             # hold the pipe open: nc's input
+rce launch player --param test=$tag --param stop=1
+waitfor "sample: ready test=$tag" || exit 1
+rce key player Select
+waitfor 'Debugger>' || exit 1
+printf 'bt\nvar\nprint item.id\nc\n' >&3        # one command per line
+waitfor "sample: open test=$tag screen=details" || exit 1
+exec 3>&-                                       # close nc's input
+kill $nc $fwd
+rm debugger.in
+```
+
+`debugger.log` then holds the break, each command's answer after a `Brightscript Debugger>` prompt, and the app's lines after `c`. Put the stop in your script's cleanup (`trap 'rce device stop player' EXIT`) so it runs whatever fails.
+
+### The SceneGraph inspector
+
+The SceneGraph debug server on device port 8080 prints the app's node tree and memory use. Forward it and connect:
+
+```sh
+rce forward player 8080 &
+nc 127.0.0.1 8080
+```
+
+It prints a line naming the device and a `>` prompt. Type:
+
+| Type | What it prints |
+|---|---|
+| `sgnodes all` | every node the app created, as an XML tree: `MainScene`, `HomeScreen`, the `RowList` named `grid` with its content, each `GridItem` with its `Label` |
+| `sgnodes roots` | the nodes with no parent (kept alive by BrightScript references) |
+| `sgnodes grid` | the nodes whose `id` is `grid` |
+| `free` | the device's memory in use and free |
+
+For example, the start of `sgnodes all`:
+
+```
+><All_Nodes node-count="164">
+	<MainScene children="0" extends="Scene" focused="true" focusable="true" ...>
+		<HomeScreen children="2" extends="Group" name="home" ...>
+			<Label ... text="RCE Sample" ... />
+			<RowList name="grid" focusable="true" ... count="3" focusItem="0" ...>
+				<ContentNode children="3" ...>
+					<ContentNode children="5" ...>
+						<ContentMetaData title="Featured" />
+						<ContentNode name="feat-01" ...>
+							<ContentMetaData title="Morning Signal" url="https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8" />
+```
+
+Roku's [Debugging](https://developer.roku.com/dev/docs/debugging) page lists the other commands (`chanperf`, `fps_display`, `sgperf`, ...). Quit with Ctrl-C, then `kill %1` for the forward. A script can drive it through a named pipe exactly like the debugger above. Without forwarding anything, `rce ecp player query/app-ui` returns a similar tree, with `focused="true"` on the node that has focus.
+
+Then stop: `rce device stop player`, `rce device list --running`. About 2 device-minutes.
+
+### ECP and remote keys
+
+ECP (the External Control Protocol) is how a script drives and checks the device. `rce ecp` sends any ECP request; `--json` turns the XML answer into JSON:
+
+```sh
+rce ecp player query/active-app --json          # which app is in front
+rce ecp player query/device-info --json         # model, Roku OS version, developer mode
+rce ecp player query/media-player               # the player's state and position, during playback (XML)
+```
+
+`query/active-app` answers this while the app is in front:
+
+```json
+{
+  "app": {
+    "name": "RCE Sample",
+    "id": "dev",
+    "type": "appl",
+    "version": "1.0.1",
+    "ui-location": "dev"
+  }
+}
+```
+
+`query/device-info` includes `"developer-enabled": true` and `"ecp-setting-mode": "permissive"`, which `rce device setup-dev` turned on, and `"software-version"`, the Roku OS version.
+
+Remote keys: `rce key` presses each key in turn, `--delay` milliseconds apart:
+
+```sh
+rce key player Right Down --delay 1000          # move focus; the console prints a focus line per move
+rce key player Select                           # open details for the focused tile
+rce key player Back                             # back to the grid
+rce key player Home                             # leave the app
+```
+
+`rce launch player --param K=V` restarts the dev app with launch params, as above. Check the effect of each key on the console or with `query/active-app`, not by waiting a fixed time.
+
+Then stop: `rce device stop player`, `rce device list --running`. About 2 device-minutes.
+
+### Screenshots
+
+```sh
+rce screenshot player -o shot.jpg               # a JPEG of the screen
+```
+
+It works only while the dev app is in front (exit 4 otherwise, e.g. after `Home`), and on RCE it includes the video frame during playback. A screenshot shows what a person would see; to decide whether something worked, use the console lines and ECP. The RCE web console also shows the Cloud Device live.
+
+Then stop: `rce device stop player`, `rce device list --running`. About 2 device-minutes.
+
+### With Claude
+
+With `rce-cli`'s Claude Code plugin installed (see its [Install](https://github.com/oscarsanchez/rce-cli#install)), Claude runs the same steps through its `rce` skill. Ask in plain words, from this repo's folder, and name the Cloud Device and a cap. For example:
+
+- "Build the app, start a Run on `player` capped at 15 minutes, sideload `build/app.zip`, and tell me when the console prints `sample: ready`."
+- "Launch the app with `test=c1`, press Right twice, Down, then OK, and show me a screenshot of the details screen. Check the console lines for each step."
+- "Launch with `test=c2` and `stop=1`, press OK on the first tile, and when the debugger stops, show me the backtrace and the local variables and print `item.title`. Then continue and confirm the details screen opened."
+- "Forward port 8080 and dump the SceneGraph node tree with `sgnodes all`, then use `query/app-ui` to tell me which node has focus."
+- "What does `query/device-info` say about developer mode and the Roku OS version?"
+- "Stop the Run and confirm nothing is running."
+
+What Claude does and asks, from the skill:
+
+- It starts and stops Runs, sideloads, launches, presses keys, reads the console, and forwards ports without asking: with the permission rules in `rce-cli`'s [Claude Code settings](https://github.com/oscarsanchez/rce-cli#claude-code-settings), these run without a prompt. Starting a Run is billed, so give it a cap in the prompt.
+- It asks first before anything permanent or that changes saved state: `device create`, `device retire`, `device setup-dev`, `token set`, `snapshot take`, `snapshot use-as-dev`, and `selftest --live` (a billed Run that replaces the dev app). `setup-dev` and `token set` need you at a terminal, so it hands those to you, and it never handles your token.
+- It stops every Run it started before it finishes, a failed task included, and checks `rce device list --running`. A Run it didn't start is yours: it reports it and leaves it running.
+- It claims something worked only from the device's evidence: a console line it waited for, an ECP answer, or a screenshot it looked at.
+- The plugin's Stop hook warns at the end of each Claude turn if any Run is still billing.
+
+A session like the list above needs about 5 device-minutes, under two cents, plus however long the Run waits between your prompts: RCE bills until the stop, whether or not anything is happening. End with "stop the Run", and check `rce device list --running` yourself.
+
+### The VS Code BrightScript debugger
+
+The VS Code BrightScript debugger (the BrightScript Language extension's roku-debug) does not work through `rce` yet. It installs the app over the device's port 80 and launches it over ECP on port 8060. On RCE those ports are reached only through RCE's API, as HTTP, so `rce forward` refuses them (`rce sideload` and `rce ecp` are the way to reach them). Until that changes, use `rce sideload` and `rce launch`, and the console debugger above. A tracking ticket covers local HTTP forwarding for ports 80 and 8060; it isn't public yet, and this README will link to it when it is.
 
 ## Costs
 
