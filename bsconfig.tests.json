@@ -1,0 +1,18 @@
+{
+    "rootDir": ".",
+    "files": [
+        "manifest",
+        "components/**/*",
+        "data/**/*",
+        "images/**/*",
+        { "src": "build/unit-lib/*.brs", "dest": "source/lib" },
+        { "src": "tests/unit/*.spec.bs", "dest": "source/tests" }
+    ],
+    "stagingDir": "build/tests-staging",
+    "outFile": "build/tests.zip",
+    "plugins": ["rooibos-roku"],
+    "rooibos": {
+        "catchCrashes": true,
+        "lineWidth": 120
+    }
+}

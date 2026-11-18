@@ -1,0 +1,101 @@
+' Unit tests for components/lib/catalog.brs. The test build copies it to
+' source/lib, so these suites can call it (see bsconfig.tests.json).
+namespace tests
+
+    @suite("catalog")
+    class CatalogTests extends rooibos.BaseTestSuite
+
+        '+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+        @describe("ParseCatalog")
+        '+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+        @it("reads the bundled catalog: three rows of five items")
+        function _()
+            catalog = ParseCatalog(ReadAsciiFile("pkg:/data/catalog.json"))
+            m.assertNotInvalid(catalog)
+            m.assertEqual(catalog.stream, { url: "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8", format: "hls" })
+            m.assertEqual([catalog.rows[0].title, catalog.rows[1].title, catalog.rows[2].title], ["Featured", "Nature", "City"])
+            m.assertEqual([catalog.rows[0].items.Count(), catalog.rows[1].items.Count(), catalog.rows[2].items.Count()], [5, 5, 5])
+            m.assertEqual(catalog.rows[0].color, "0x2E5E8CFF")
+            m.assertEqual(catalog.rows[0].items[0], {
+                id: "feat-01",
+                title: "Morning Signal",
+                description: "A radio tower keeps broadcasting long after the town below has gone quiet.",
+                durationSeconds: 596
+            })
+        end function
+
+        @it("fills in defaults for a missing format, description, duration and row title and color")
+        function _()
+            catalog = ParseCatalog(`{"stream": {"url": "https://example.com/a.m3u8"}, "rows": [{"items": [{"id": "a", "title": "A"}]}]}`)
+            m.assertEqual(catalog, {
+                stream: { url: "https://example.com/a.m3u8", format: "hls" },
+                rows: [{ title: "", color: "0x404040FF", items: [{ id: "a", title: "A", description: "", durationSeconds: 0 }] }]
+            })
+        end function
+
+        @it("keeps whole seconds of a fractional duration")
+        function _()
+            catalog = ParseCatalog(`{"stream": {"url": "u"}, "rows": [{"items": [{"id": "a", "title": "A", "durationSeconds": 61.9}]}]}`)
+            m.assertEqual(catalog.rows[0].items[0].durationSeconds, 61)
+        end function
+
+        @it("leaves out items without an id or a title, and rows left with no items")
+        function _()
+            catalog = ParseCatalog(`{"stream": {"url": "u"}, "rows": [
+                {"title": "kept", "items": [{"id": "a", "title": "A"}, {"title": "no id"}, {"id": "b"}, {"id": "", "title": "empty id"}, "not an item"]},
+                {"title": "emptied", "items": [{"id": "c"}]},
+                {"title": "no items"}
+            ]}`)
+            m.assertEqual(catalog.rows.Count(), 1)
+            m.assertEqual(catalog.rows[0].title, "kept")
+            m.assertEqual(catalog.rows[0].items.Count(), 1)
+            m.assertEqual(catalog.rows[0].items[0].id, "a")
+        end function
+
+        @it("returns invalid for text that is not a JSON object")
+        function _()
+            m.assertInvalid(ParseCatalog("not json"))
+            m.assertInvalid(ParseCatalog("[]"))
+            m.assertInvalid(ParseCatalog(""))
+        end function
+
+        @it("returns invalid without a stream URL")
+        function _()
+            m.assertInvalid(ParseCatalog(`{"rows": [{"items": [{"id": "a", "title": "A"}]}]}`))
+            m.assertInvalid(ParseCatalog(`{"stream": {"url": ""}, "rows": [{"items": [{"id": "a", "title": "A"}]}]}`))
+        end function
+
+        @it("returns invalid when no row has a usable item")
+        function _()
+            m.assertInvalid(ParseCatalog(`{"stream": {"url": "u"}}`))
+            m.assertInvalid(ParseCatalog(`{"stream": {"url": "u"}, "rows": []}`))
+            m.assertInvalid(ParseCatalog(`{"stream": {"url": "u"}, "rows": [{"items": [{"title": "no id"}]}]}`))
+        end function
+
+        '+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+        @describe("FormatDuration")
+        '+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+        @it("writes minutes and two-digit seconds under an hour")
+        function _()
+            m.assertEqual(FormatDuration(0), "0:00")
+            m.assertEqual(FormatDuration(5), "0:05")
+            m.assertEqual(FormatDuration(596), "9:56")
+            m.assertEqual(FormatDuration(3599), "59:59")
+        end function
+
+        @it("adds hours, with two-digit minutes, from an hour on")
+        function _()
+            m.assertEqual(FormatDuration(3600), "1:00:00")
+            m.assertEqual(FormatDuration(3725), "1:02:05")
+        end function
+
+        @it("writes 0:00 for a negative duration")
+        function _()
+            m.assertEqual(FormatDuration(-3), "0:00")
+        end function
+
+    end class
+
+end namespace

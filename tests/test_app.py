@@ -3,24 +3,29 @@
 # requires-python = ">=3.11"
 # dependencies = ["pytest>=8,<9"]
 # ///
-"""UI tests for the sample app on a Cloud Device, driven only through `rce --json`.
+"""Unit and UI tests for the sample app on a Cloud Device, driven only through `rce --json`.
 
     RCE_DEVICE=<Device Name or RCE id> uv run tests/test_app.py
 
-Needs a Run already going on that Cloud Device and `build/app.zip` built; it starts
-and stops no Run. Pass or fail comes from the app's console lines (README, "Console
-log lines") and ECP answers; each test saves a screenshot as evidence only. Writes
-test-results/junit.xml, test-results/console.log and test-results/screenshots/.
+Needs a Run already going on that Cloud Device, `build/tests.zip` (the Rooibos test
+build, `npm run build:tests`) and `build/app.zip` (`./build.sh`); it starts and stops
+no Run. The first test sideloads the test build and reads Rooibos's result line; the
+UI tests then sideload the app build. Pass or fail comes from console lines (Rooibos's
+report, and the app's lines in README "Console log lines") and ECP answers; each test
+saves a screenshot as evidence only. Writes test-results/junit.xml (both kinds),
+test-results/console.log and test-results/screenshots/.
 """
 
 import json
 import os
+import re
 import subprocess
 import sys
 import threading
 import time
 import uuid
 import warnings
+import zipfile
 from pathlib import Path
 from xml.etree import ElementTree
 
@@ -29,11 +34,13 @@ import pytest
 ROOT = Path(__file__).resolve().parent.parent
 RESULTS = ROOT / "test-results"
 APP_ZIP = ROOT / "build" / "app.zip"
+UNIT_ZIP = ROOT / "build" / "tests.zip"
 
 RCE_TIMEOUT = 300  # seconds for one rce call (a sideload waits for the install)
 LINE_TIMEOUT = 30  # seconds for the app's next console line after a launch or key
 PLAY_TIMEOUT = 60  # seconds from Play to the playing line
 ECP_TIMEOUT = 15  # seconds for ECP to agree with the console
+UNIT_TIMEOUT = 120  # seconds from the test build starting to Rooibos's result line
 CRASH_MARKERS = ("runtime error", "brightscript micro debugger")
 
 
@@ -185,8 +192,9 @@ def device() -> str:
     name = os.environ.get("RCE_DEVICE")
     if not name:
         pytest.exit("set RCE_DEVICE to the Cloud Device's Device Name or RCE id", returncode=2)
-    if not APP_ZIP.exists():
-        pytest.exit(f"{APP_ZIP.relative_to(ROOT)} is missing: run ./build.sh first", returncode=2)
+    for build, command in ((UNIT_ZIP, "npm run build:tests"), (APP_ZIP, "./build.sh")):
+        if not build.exists():
+            pytest.exit(f"{build.relative_to(ROOT)} is missing: run {command} first", returncode=2)
     status = rce("device", "status", name)
     if status["run"] is None:
         pytest.exit(
@@ -227,6 +235,62 @@ def screenshot(request: pytest.FixtureRequest, device: str):
         rce("screenshot", device, "-o", str(path))
     except RceError as error:
         warnings.warn(f"no screenshot for {request.node.name}: {error}")
+
+
+def tagged_build(build: Path, tag: str) -> tuple[Path, str]:
+    """A copy of `build` whose manifest title ends in `tag`, and that title. The device
+    prints the title when the app starts, so the copy's output can't be confused with
+    an earlier run's that the console replays."""
+    copy = RESULTS / f"{build.stem}-{tag}.zip"
+    with zipfile.ZipFile(build) as source, zipfile.ZipFile(copy, "w", zipfile.ZIP_DEFLATED) as target:
+        for entry in source.infolist():
+            data = source.read(entry)
+            if entry.filename == "manifest":
+                lines = data.decode().splitlines()
+                title = next(line for line in lines if line.startswith("title=")).removeprefix("title=")
+                title = f"{title} {tag}"
+                data = "\n".join(f"title={title}" if line.startswith("title=") else line for line in lines)
+                data = (data + "\n").encode()
+            target.writestr(entry, data)
+    return copy, title
+
+
+ROOIBOS_RESULT = "[Rooibos Result]: "
+ROOIBOS_GROUP = re.compile(r"^\s*\|-(?!-)(?P<group>.+?)\s*$")
+ROOIBOS_TEST = re.compile(r"\|--(?P<test>.+?) : \.*(?P<status>PASS|FAIL|CRASH|SKIP)\b")
+
+
+def rooibos_failures(report: list[str]) -> list[str]:
+    """Each failed test in Rooibos's console report, as `<describe group>: <test> (FAIL)`
+    (or CRASH), then the report's `|--` lines about it: where it is and why it failed."""
+    failures, group, failing = [], "", False
+    for line in report:
+        if match := ROOIBOS_GROUP.match(line):
+            group, failing = match["group"], False
+        elif match := ROOIBOS_TEST.search(line):
+            failing = match["status"] in ("FAIL", "CRASH")
+            if failing:
+                failures.append(f"{group}: {match['test']} ({match['status']})")
+        elif failing and "|--" in line:
+            failures.append("    " + line.split("|--", 1)[1].strip())
+    return failures
+
+
+def test_unit_tests_pass(device: str, console: Console):
+    """The Rooibos suites (tests/unit) on the device: sideloading the test build starts
+    it, and Rooibos prints its report, then `[Rooibos Result]: PASS` or `FAIL`."""
+    build, title = tagged_build(UNIT_ZIP, "t" + uuid.uuid4().hex[:8])
+    start = console.mark()
+    rce("sideload", device, str(build))
+    begun, _ = console.next_line(start, lambda line: f"'{title}'" in line, LINE_TIMEOUT)
+    if begun < 0:
+        pytest.fail(f"the test build '{title}' did not start in {LINE_TIMEOUT} s\n{console.tail()}")
+    end, result = console.next_line(begun, lambda line: line.strip().startswith(ROOIBOS_RESULT), UNIT_TIMEOUT)
+    if end < 0:
+        pytest.fail(f"no Rooibos result line in {UNIT_TIMEOUT} s\n{console.tail()}")
+    if result.strip() != ROOIBOS_RESULT + "PASS":
+        failures = "\n".join(f"  {line}" for line in rooibos_failures(console.lines[begun:end]))
+        pytest.fail(f"Rooibos: {result.strip()}\n{failures or console.tail()}")
 
 
 def active_app(device: str) -> dict:

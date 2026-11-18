@@ -11,7 +11,7 @@ Licence: [MIT](LICENSE) for the code. The video is not part of this repo; see [C
 - macOS or Linux, with `zip` (preinstalled on macOS).
 - `rce` installed, an RCE token set, and a Cloud Device set up for development. Follow `rce-cli`'s [Getting started](https://github.com/oscarsanchez/rce-cli#getting-started): it covers the token, creating or naming a Cloud Device, and `rce device setup-dev`, which gives it developer mode, a Dev Password and a Dev Snapshot. The examples below call that Cloud Device `player`; use your own Device Name.
 
-There is no SDK, Node or build tool to install: the app is plain BrightScript and SceneGraph XML. The UI tests need [uv](https://docs.astral.sh/uv/), which fetches Python and pytest for them.
+There is no SDK, Node or build tool to install for the app: it is plain BrightScript and SceneGraph XML. The tests need two more things: [Node](https://nodejs.org/) (a current LTS; checked with 22) for the unit tests' build only, and [uv](https://docs.astral.sh/uv/), which fetches Python and pytest for the test run.
 
 ## What's in it
 
@@ -27,7 +27,10 @@ components/lib/testlog.brs   the console lines' text: plain functions, no nodes
 data/catalog.json            the bundled catalog: three rows of five items
 images/icon_focus_hd.png     the app icon
 build.sh                     builds build/app.zip
-tests/test_app.py            the UI tests: pytest, run as a uv script
+tests/unit/*.spec.bs         the unit tests: Rooibos suites for components/lib
+bsconfig.tests.json          the unit tests' build: BrighterScript and the Rooibos plugin
+package.json                 pins brighterscript and rooibos-roku, and runs that build
+tests/test_app.py            runs the unit tests, then the UI tests: pytest, run as a uv script
 ```
 
 The catalog is made up and bundled with the app, so there is no backend. Every item plays the same stream, Big Buck Bunny.
@@ -373,24 +376,67 @@ A session like the list above needs about 5 device-minutes, under two cents, plu
 
 The VS Code BrightScript debugger (the BrightScript Language extension's roku-debug) does not work through `rce` yet. It installs the app over the device's port 80 and launches it over ECP on port 8060. On RCE those ports are reached only through RCE's API, as HTTP, so `rce forward` refuses them (`rce sideload` and `rce ecp` are the way to reach them). Until that changes, use `rce sideload` and `rce launch`, and the console debugger above. A tracking ticket covers local HTTP forwarding for ports 80 and 8060; it isn't public yet, and this README will link to it when it is.
 
+## Unit tests
+
+The plain logic in `components/lib` (catalog parsing, `FormatDuration` and the console lines' text) has [Rooibos](https://github.com/rokucommunity/rooibos) unit tests in `tests/unit/`. They are BrighterScript, so they need a build of their own; the app keeps its plain `zip` build and never needs Node.
+
+```sh
+npm ci                  # once: brighterscript and rooibos-roku, at the versions package.json pins
+npm run build:tests     # writes build/tests.zip
+```
+
+`bsconfig.tests.json` compiles `manifest`, `components`, `data` and `images` (the app without `source/main.brs`) and the suites, with the Rooibos plugin, which adds the framework and a `main` that runs the suites instead of the app. The suites run on the main thread, in source scope, but `components/lib` is in component scope, so `npm run build:tests` first copies `components/lib/*.brs` to `build/unit-lib/`, and the build places those copies in `source/lib` as well. The app's own files are unchanged. To test another plain-logic file, put it in `components/lib` and add a suite.
+
+Sideloading the test build starts it, and Rooibos prints a report to the console, ending in its result line:
+
+```
+ [START TEST REPORT]
+ ...
+ Total: 15
+   Passed: 15
+ ...
+ RESULT: Success
+ [END TEST REPORT]
+[Rooibos Result]: PASS
+[Rooibos Shutdown]
+```
+
+`[Rooibos Result]: FAIL` means a test failed or crashed. In the report, a failed test's line ends in `FAIL` (or `CRASH`), followed by where the assertion failed and its message. To try it by hand: `rce console player --strip-ansi` in one terminal, `rce sideload player build/tests.zip` in another.
+
+The test run below runs them for you, first.
+
 ## UI tests
 
 `tests/test_app.py` drives the app on a Cloud Device and checks its main paths: it reaches ready with the dev app in front, focus moves right and down on the grid, Select opens details for the focused tile, Play reaches playing, and Back (from the player, then from details) returns to the grid with the same tile focused. It is a pytest file run as a uv script, its dependencies inline, and it talks to the device only through `rce ... --json`.
 
-Run it against your own Cloud Device:
+One command runs the unit tests and then the UI tests, against your own Cloud Device:
 
 ```sh
-./build.sh
+./build.sh                                      # build/app.zip
+npm run build:tests                             # build/tests.zip (after npm ci, once)
 rce device start player --max-runtime 900       # the tests need a Run going; they start and stop none
-RCE_DEVICE=player uv run tests/test_app.py      # or ./tests/test_app.py; takes about a minute
+RCE_DEVICE=player uv run tests/test_app.py      # or ./tests/test_app.py; takes about a minute and a quarter
 rce device stop player
 rce device list --running
 ```
 
-`RCE_DEVICE` is a Device Name or an RCE id. Other arguments go to pytest, for example `-k focus` or `-x`. The exit code is pytest's: 0 when every test passed, 1 when one failed, 2 when the suite refused to start (no `RCE_DEVICE`, no `build/app.zip`, or no Run going). It writes, under `test-results/` (not committed):
+The first test, `test_unit_tests_pass`, sideloads the test build, waits for `[Rooibos Result]:` and fails unless it says `PASS`, naming each failed test with the report's lines about it, for example:
 
-- `junit.xml`, the JUnit report;
+```
+Failed: Rooibos: [Rooibos Result]: FAIL
+  console lines: focus line (FAIL)
+    Test : file:///.../tests/unit/testlog.spec.bs:29
+    Failed at: file:///.../tests/unit/testlog.spec.bs:30
+    Error Message: expected ""sample: focus test=run1 screen=home …" to equal ""sample: focus test=run1 screen=home …"
+```
+
+Rooibos shortens long values in its messages (the `…`); the line numbers point at the assertion. The test sideloads a copy of the test build whose manifest title ends in a fresh tag, and reads only the report printed after the device starts that title, so a result replayed from an earlier run can't pass it. The UI tests then sideload the app build.
+
+`RCE_DEVICE` is a Device Name or an RCE id. Other arguments go to pytest, for example `-k unit_tests`, `-k focus` or `-x`. The exit code is pytest's: 0 when every test passed, 1 when one failed, 2 when the suite refused to start (no `RCE_DEVICE`, no `build/tests.zip` or `build/app.zip`, or no Run going). It writes, under `test-results/` (not committed):
+
+- `junit.xml`, one JUnit report for the unit tests (as one test case) and the UI tests;
 - `console.log`, every console line the session saw;
+- `tests-<tag>.zip`, the tagged copy of the test build it sideloaded;
 - `screenshots/<test name>.jpg`, the screen at the end of each test, pass or fail.
 
 While it runs, leave the device alone: close your own `rce console` first (a device takes one console client, and the suite holds it for the whole session) and press no keys.
