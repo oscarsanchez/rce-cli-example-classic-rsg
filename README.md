@@ -528,7 +528,7 @@ The loop above, run start to stop without pauses, takes about 3 device-minutes, 
 
 ## Contributing
 
-Before you push, run `scripts/check`: both builds (failing on any BrighterScript diagnostic), the workflow lint, and the test suite's refusal without `RCE_DEVICE`. It needs Node and uv, starts no Run and costs nothing; the `check` workflow runs it on every push and pull request.
+Before you push, run `scripts/check`: both builds (failing on any BrighterScript diagnostic), the workflow lint, and the test suite's refusal without `RCE_DEVICE`. It needs Node and uv, starts no Run and costs nothing; the `check` workflow runs it on every push and pull request. Reviews follow [CODING_STANDARDS.md](CODING_STANDARDS.md).
 
 ## Credits
 
