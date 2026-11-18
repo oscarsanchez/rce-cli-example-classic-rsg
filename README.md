@@ -31,6 +31,7 @@ tests/unit/*.spec.bs         the unit tests: Rooibos suites for components/lib
 bsconfig.tests.json          the unit tests' build: BrighterScript and the Rooibos plugin
 package.json                 pins brighterscript and rooibos-roku, and runs that build
 tests/test_app.py            runs the unit tests, then the UI tests: pytest, run as a uv script
+.github/workflows/roku-test.yml  the pipeline: both kinds of test on a Cloud Device in GitHub Actions
 ```
 
 The catalog is made up and bundled with the app, so there is no backend. Every item plays the same stream, Big Buck Bunny.
@@ -456,6 +457,48 @@ How a test decides:
 A wrong expectation fails with what was expected and what came instead, for example `expected the console line 'sample: focus test=t8ec16e70 screen=home row=1 col=2 item=nat-03', got '... row=1 col=1 item=nat-02'` or `expected query/app-ui grid focus to be (1, 2, 'Tide Tables') within 15 s, last answer (1, 1, 'Tide Tables')`.
 
 Cost: a Run from start to stop around the suite is about 3 device-minutes, about one cent.
+
+## Pipeline
+
+`.github/workflows/roku-test.yml` runs the unit tests and the UI tests on a Cloud Device in GitHub Actions, in one Run, and always stops it. It is billed, so it runs only when asked:
+
+- **On demand:** Actions > roku-test > Run workflow, or `gh workflow run roku-test.yml`.
+- **On a pull request labelled `roku-test`:** when the label is added, and again on each push to the PR while it has the label. A PR without the label runs nothing.
+
+One job, in order: checkout, uv and Node, `bin/rce` downloaded at a pinned `rce-cli` tag (as in `rce-cli`'s [Pipelines](https://github.com/oscarsanchez/rce-cli#pipelines-cicd) recipe), both builds, a Run started from the Dev Snapshot, `uv run tests/test_app.py`, the stop, then the artifacts and the summary.
+
+- **Results without reading logs:** the job summary shows the passed, failed and skipped counts and each failed test's first message line. The `test-results` artifact holds `junit.xml`, `console.log` and `screenshots/`, uploaded whether the tests passed or not.
+- **The stop is guarded,** as in the recipe: it runs once the start step has run, even after a failed test or a cancelled job, and skips when RCE refused the start (exit 4), because then the Run on the Cloud Device, if any, is someone else's.
+- **One job at a time per Cloud Device:** the job's `concurrency` group is the Cloud Device's RCE id. The job times out after 10 minutes, and the Run's cap is 12 (`--max-runtime 720`), so a runner that dies before the stop bills at most 12 minutes.
+- **The token and the Dev Password** reach only the steps that call `rce` (start, tests, stop), as environment variables from secrets: `rce` reads `RCE_TOKEN` and `RCE_DEV_PASSWORD` and takes neither as a flag, so neither shows in a command line or the logs.
+
+### Set it up for your own Cloud Device
+
+You need your own copy of this repo on GitHub, an RCE token, and a Cloud Device set up for development (see [Prerequisites](#prerequisites)). A teammate does the same with their own copy, their own RCE token and their own Cloud Device; nothing here is tied to one person.
+
+Make an RCE token for the pipeline alone in the RCE web console (this repo's is called `ci`), so that revoking it breaks neither your own `rce` nor `rk`. Then, from a terminal where `rce` knows your Cloud Device (`player` here):
+
+```sh
+repo=you/your-copy                              # your copy of this repo
+gh variable set RCE_DEVICE --repo "$repo" --body "$(rce device show player --json | jq -r .id)"
+gh variable set RCE_SNAPSHOT --repo "$repo" --body "$(rce snapshot list player --json | jq -r '.[] | select(.dev_snapshot) | .id')"
+rce device show player --dev-password 2>&1 | sed -n 's/^The Dev Password of .* is: //p' | gh secret set RCE_DEV_PASSWORD --repo "$repo"
+gh secret set RCE_TOKEN --repo "$repo"          # asks for it: paste the pipeline's token
+```
+
+The variables are the Cloud Device's RCE id and its Dev Snapshot's id: a runner has no per-user config, so it addresses both by id. The third line pipes the Dev Password from `rce`'s stderr straight into the secret, so it is never printed; `gh secret set` without `--body` asks for the token without echoing it.
+
+- **Anyone with write access to the repo can use its secrets,** by changing a workflow. A GitHub Environment with you as required reviewer gates them behind your approval: if your plan offers required reviewers on a private repo, set the two secrets with `--env <environment>` instead and add `environment: <environment>` to the job. This repo's plan doesn't, so its secrets are plain repo secrets.
+- **One Run at a time across the RCE organisation.** The trial allows one Run at a time across the whole organisation, not per Cloud Device, so teammates in the same RCE organisation share it: while anyone's Run is going (yours at a terminal, an agent's, another copy's pipeline), the pipeline's start is refused, its stop skips and stops nothing, and the job fails. Re-run it when `rce device list --running` is empty.
+- **Give the pipeline a Cloud Device nobody else uses while it runs:** the stop step stops whatever Run is on that Cloud Device after a start that wasn't refused.
+
+### Cost per run
+
+The Run, from start to stop, is about 3 device-minutes, about one cent (see [Costs](#costs)); a job killed before its stop bills at most its 12-minute cap, about 4 cents. The job itself takes about 5 minutes of GitHub Actions time, which a private repo counts against its plan's included minutes.
+
+### This repo's pipeline is a demo
+
+This repo runs the pipeline on the maintainer's Cloud Device `auto`. After its first green run is recorded, the maintainer revokes the `ci` token and deletes this repo's `RCE_TOKEN` and `RCE_DEV_PASSWORD` secrets: the repo keeps showing the workflow and its past runs, but a new run can start nothing: without a token its start fails. To run it yourself, set it up in your own copy, as above.
 
 ## Costs
 

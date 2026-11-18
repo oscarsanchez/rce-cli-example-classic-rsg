@@ -1,0 +1,98 @@
+name: roku-test
+
+# Billed: each run starts one Run on a Cloud Device. It runs only on demand, or on a
+# pull request that carries the `roku-test` label (when the label is added, and on
+# each push to the PR while it has it). See README "Pipeline".
+on:
+  workflow_dispatch:
+  pull_request:
+    types: [labeled, synchronize]
+
+permissions:
+  contents: read
+
+jobs:
+  roku-test:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.action == 'labeled' && github.event.label.name == 'roku-test') ||
+      (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'roku-test'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    concurrency:
+      group: rce-${{ vars.RCE_DEVICE }}   # one job at a time on this Cloud Device
+    env:
+      RCE_DEVICE: ${{ vars.RCE_DEVICE }}
+      RCE_SNAPSHOT: ${{ vars.RCE_SNAPSHOT }}
+    # The token and the Dev Password go only to the steps that call rce, not to npm ci.
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: astral-sh/setup-uv@v10.3.3
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install rce
+        run: |
+          mkdir -p "$RUNNER_TEMP/bin"
+          curl -fsSL -o "$RUNNER_TEMP/bin/rce" https://raw.githubusercontent.com/oscarsanchez/rce-cli/v0.1.0-rc.1/bin/rce
+          chmod +x "$RUNNER_TEMP/bin/rce"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      - name: Build the app and the unit tests
+        run: |
+          ./build.sh
+          npm ci
+          npm run build:tests
+      - name: Start the Run
+        id: start
+        env:
+          RCE_TOKEN: ${{ secrets.RCE_TOKEN }}
+        run: |
+          status=0
+          rce device start "$RCE_DEVICE" --snapshot "$RCE_SNAPSHOT" --max-runtime 720 --json || status=$?
+          if [ "$status" -eq 4 ]; then echo "refused=true" >> "$GITHUB_OUTPUT"; fi   # no Run of ours to stop
+          exit "$status"
+      - name: Unit and UI tests
+        env:
+          RCE_TOKEN: ${{ secrets.RCE_TOKEN }}
+          RCE_DEV_PASSWORD: ${{ secrets.RCE_DEV_PASSWORD }}
+        run: uv run tests/test_app.py
+      - name: Stop the Run
+        if: always() && contains(fromJSON('["success", "failure", "cancelled"]'), steps.start.outcome) && steps.start.outputs.refused != 'true'
+        env:
+          RCE_TOKEN: ${{ secrets.RCE_TOKEN }}
+        run: rce device stop "$RCE_DEVICE" --json
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: test-results
+          path: |
+            test-results/junit.xml
+            test-results/console.log
+            test-results/screenshots/
+          if-no-files-found: ignore
+      - name: Summary
+        if: always()
+        run: |
+          python3 - <<'EOF' >> "$GITHUB_STEP_SUMMARY"
+          from pathlib import Path
+          from xml.etree import ElementTree
+
+          report = Path("test-results/junit.xml")
+          if not report.exists():
+              print("No test results: the tests did not run.")
+              raise SystemExit
+          cases = list(ElementTree.parse(report).iter("testcase"))
+          failed = [c for c in cases if c.find("failure") is not None or c.find("error") is not None]
+          skipped = [c for c in cases if c.find("skipped") is not None]
+          passed = len(cases) - len(failed) - len(skipped)
+          print("| Passed | Failed | Skipped |\n|---|---|---|")
+          print(f"| {passed} | {len(failed)} | {len(skipped)} |")
+          for case in failed:
+              problem = case.find("failure")
+              if problem is None:
+                  problem = case.find("error")
+              message = (problem.get("message") or "").splitlines()[:1]
+              print(f"\n- `{case.get('name')}`: {message[0] if message else 'failed'}")
+          EOF
