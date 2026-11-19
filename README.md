@@ -32,6 +32,7 @@ bsconfig.tests.json          the unit tests' build: BrighterScript and the Rooib
 package.json                 pins brighterscript and rooibos-roku, and runs that build
 tests/test_app.py            runs the unit tests, then the UI tests: pytest, run as a uv script
 .github/workflows/roku-test.yml  the pipeline: both kinds of test on a Cloud Device in GitHub Actions
+.github/workflows/roku-test-pool.yml  the same tests as two parallel jobs on a Pool of Cloud Devices
 scripts/check                the offline check: both builds and the workflow lint, no Cloud Device
 .github/workflows/check.yml  runs scripts/check on every push and pull request, free
 ```
@@ -562,6 +563,50 @@ The Run, from start to stop, is about 3 device-minutes, about one cent (see [Cos
 ### This repo's pipeline is a demo
 
 This repo runs the pipeline on the maintainer's Cloud Device `auto`. After its first green run is recorded, the maintainer revokes the `ci` token and deletes this repo's `RCE_TOKEN` and `RCE_DEV_PASSWORD` secrets: the repo keeps showing the workflow and its past runs, but a new run can start nothing: without a token its start fails. To run it yourself, set it up in your own copy, as above.
+
+### Parallel jobs on a Pool
+
+`.github/workflows/roku-test-pool.yml` runs the same tests as two jobs at once, each on its own Cloud Device claimed from a Pool: `unit` runs the unit tests (`-k unit_tests`) and `ui` every other test (`-k "not unit_tests"`), so together they run each test once; a new test lands in `ui` unless its name says `unit_tests`. It is for a team with several Cloud Devices; with one, keep `roku-test`. It runs only on demand: Actions > roku-test-pool > Run workflow, or `gh workflow run roku-test-pool.yml`.
+
+Each job checks that the `RCE_POOL` variable is set (it fails before any `rce` call if not), builds as `roku-test` does, then:
+
+- **Claims a Pool member** with `rce device start --pool --wait-free 120 --max-runtime 720 --json`, recording the claimed Cloud Device's RCE id and its Run's id, or that RCE refused the Claim (exit 4). There is no `concurrency` group: the Claim keeps the two jobs on different Cloud Devices.
+- **Takes that member's Dev Password** out of the `RCE_DEV_PASSWORDS` secret with `jq`, masks it with `::add-mask::` before anything can print it, and exports it as `RCE_DEV_PASSWORD`. A member missing from the secret fails the job, and the stop still runs.
+- **Runs its suite** with `RCE_DEVICE` set to the claimed RCE id, then **stops its own Run** with the same guard as `roku-test` and that Run's id (`--run`).
+- **Reports its suite** in its own artifact (`test-results-unit`, `test-results-ui`) and its own job summary.
+
+The job times out after 12 minutes, the Claim's wait of up to 2 minutes included, and the Run's cap is 12 minutes from the Claim, so a killed job holds its member for at most 12 minutes. `RCE_TOKEN` reaches only the Claim, the tests and the stop; `RCE_DEV_PASSWORDS` only the password step.
+
+To set it up in your own copy, set up each member for development (see [Prerequisites](#prerequisites)) and make a pipeline token as above. Then, from a terminal where `rce` knows the members (`player` and `tv` here):
+
+```sh
+(                                               # a subshell: stops at the first error, before gh sets anything
+  set -euo pipefail
+  repo=you/your-copy                            # your copy of this repo
+  pool='{}' passwords='{}'
+  for name in player tv; do                     # your Pool members' Device Names
+    id=$(rce device show "$name" --json | jq .id)
+    snapshot=$(rce snapshot list "$name" --json | jq -e '.[] | select(.dev_snapshot) | .id') \
+      || { echo "no Dev Snapshot found for $name: nothing set" >&2; exit 1; }
+    password=$(rce device show "$name" --dev-password 2>&1 >/dev/null) \
+      || { echo "no Dev Password from rce for $name: nothing set" >&2; exit 1; }
+    pool=$(jq -c --arg id "$id" --argjson snapshot "$snapshot" '. + {($id): $snapshot}' <<<"$pool")
+    passwords=$(PASSWORD="$password" jq -c --arg id "$id" '. + {($id): env.PASSWORD}' <<<"$passwords")
+  done
+  gh variable set RCE_POOL --repo "$repo" --body "$pool"
+  gh secret set RCE_DEV_PASSWORDS --repo "$repo" <<<"$passwords"
+)
+gh secret set RCE_TOKEN --repo you/your-copy    # asks for it: paste the pipeline's token
+```
+
+`RCE_POOL` maps each member's RCE id to its Dev Snapshot's id, and `RCE_DEV_PASSWORDS` each RCE id to its Dev Password. Each Dev Password goes from `rce`'s stderr into a variable and from there into the secret, so none is printed. A member with no stored Dev Password, or no Dev Snapshot, stops the snippet before `gh` sets anything, so an error message is never stored as a password. With `RCE_POOL` set in your terminal too, `rce device list --pool` shows which members are free.
+
+For what a Pool can and can't do (no fairness between waiting jobs, why `--max-runtime` stays short, Snapshots RCE deletes after 180 days, the small race `--run` leaves, and a trial running one Run at a time, so the second job's Claim is refused), see `rce-cli`'s [Parallel jobs on a Pool](https://github.com/oscarsanchez/rce-cli#parallel-jobs-on-a-pool).
+
+Cost: two Runs per dispatch, each about 3 device-minutes and about one cent (see [Costs](#costs)); a job killed before its stop bills at most its 12-minute cap, about 4 cents.
+
+This repo's Pool workflow is a demo too. It ran green once on the maintainer's Cloud Devices `auto` and `player` ([the run](TODO-GREEN-RUN-URL)), then the maintainer deleted this repo's `RCE_TOKEN` and `RCE_DEV_PASSWORDS` secrets, as for `roku-test`: a new run here starts nothing. To run it yourself, set it up in your own copy, as above.
+<!-- TODO-GREEN-RUN-URL: the maintainer replaces it with the green roku-test-pool run's URL after the live dispatch (ticket 03). -->
 
 ## Costs
 

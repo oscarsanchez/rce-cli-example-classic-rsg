@@ -1,0 +1,127 @@
+name: roku-test-pool
+
+# Billed: each run starts two Runs, one per job, each on a Pool member the job claims.
+# It runs only on demand. See README "Parallel jobs on a Pool".
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  roku-test:
+    runs-on: ubuntu-latest
+    # The Claim's wait (--wait-free 120) counts against this timeout, and the Run's cap
+    # (--max-runtime 720) is 12 minutes from the Claim, just after it: a killed job holds
+    # its Pool member for at most 12 minutes. No concurrency group: the Claim keeps the
+    # jobs on different Cloud Devices.
+    timeout-minutes: 12
+    strategy:
+      fail-fast: false   # each suite reports, whatever the other's result
+      matrix:
+        include:
+          - suite: unit
+            select: unit_tests       # the Rooibos unit tests
+          - suite: ui
+            select: not unit_tests   # every other test, so the two jobs run each test once
+    defaults:
+      run:
+        shell: bash   # adds pipefail, so `| tee` keeps rce's exit code
+    env:
+      RCE_POOL: ${{ vars.RCE_POOL }}
+    # The token and the Dev Passwords go only to the steps that need them, not to npm ci.
+    steps:
+      - name: Check the variable
+        run: |
+          if [ -z "$RCE_POOL" ]; then
+            echo "::error::Repository variable not set: RCE_POOL. See README \"Parallel jobs on a Pool\"."
+            exit 1
+          fi
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install rce
+        run: |
+          mkdir -p "$RUNNER_TEMP/bin"
+          curl -fsSL -o "$RUNNER_TEMP/bin/rce" https://raw.githubusercontent.com/oscarsanchez/rce-cli/v0.2.0/bin/rce
+          chmod +x "$RUNNER_TEMP/bin/rce"
+          "$RUNNER_TEMP/bin/rce" --version
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      - name: Build the app and the unit tests
+        run: |
+          ./build.sh
+          npm ci
+          npm run build:tests
+      - name: Claim a Pool member
+        id: start
+        env:
+          RCE_TOKEN: ${{ secrets.RCE_TOKEN }}
+        run: |
+          status=0
+          rce device start --pool --wait-free 120 --max-runtime 720 --json | tee start.json || status=$?
+          if [ "$status" -eq 4 ]; then echo "refused=true" >> "$GITHUB_OUTPUT"; fi   # no Run of ours to stop
+          if [ "$status" -eq 0 ]; then
+            echo "id=$(jq .id start.json)" >> "$GITHUB_OUTPUT"   # the claimed Cloud Device
+            echo "run=$(jq .run.id start.json)" >> "$GITHUB_OUTPUT"   # the Run to stop
+          fi
+          exit "$status"
+      - name: Take its Dev Password
+        env:
+          RCE_DEV_PASSWORDS: ${{ secrets.RCE_DEV_PASSWORDS }}
+          RCE_ID: ${{ steps.start.outputs.id }}
+        run: |
+          password=$(jq -er --arg id "$RCE_ID" '.[$id]' <<< "$RCE_DEV_PASSWORDS")   # fails if it has none
+          echo "::add-mask::$password"   # first, so no later output shows it
+          echo "RCE_DEV_PASSWORD=$password" >> "$GITHUB_ENV"
+      - name: ${{ matrix.suite }} tests
+        env:
+          RCE_TOKEN: ${{ secrets.RCE_TOKEN }}
+          RCE_DEVICE: ${{ steps.start.outputs.id }}
+          SELECT: ${{ matrix.select }}
+        run: uv run tests/test_app.py -k "$SELECT"
+      - name: Stop the Run
+        if: always() && contains(fromJSON('["success", "failure", "cancelled"]'), steps.start.outcome) && steps.start.outputs.refused != 'true'
+        env:
+          RCE_TOKEN: ${{ secrets.RCE_TOKEN }}
+          RCE_ID: ${{ steps.start.outputs.id }}
+          RCE_RUN: ${{ steps.start.outputs.run }}
+        run: |
+          if [ -z "$RCE_RUN" ]; then exit 0; fi   # the Claim failed and dealt with any Run it made
+          rce device stop "$RCE_ID" --run "$RCE_RUN" --json
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: test-results-${{ matrix.suite }}
+          path: |
+            test-results/junit.xml
+            test-results/console.log
+            test-results/screenshots/
+          if-no-files-found: ignore
+      - name: Summary
+        if: always()
+        run: |
+          python3 - <<'EOF' >> "$GITHUB_STEP_SUMMARY"
+          from pathlib import Path
+          from xml.etree import ElementTree
+
+          report = Path("test-results/junit.xml")
+          if not report.exists():
+              print("No test results: the tests did not run.")
+              raise SystemExit
+          cases = list(ElementTree.parse(report).iter("testcase"))
+          failed = [c for c in cases if c.find("failure") is not None or c.find("error") is not None]
+          skipped = [c for c in cases if c.find("skipped") is not None]
+          passed = len(cases) - len(failed) - len(skipped)
+          print("| Passed | Failed | Skipped |\n|---|---|---|")
+          print(f"| {passed} | {len(failed)} | {len(skipped)} |")
+          for case in failed:
+              problem = case.find("failure")
+              if problem is None:
+                  problem = case.find("error")
+              message = (problem.get("message") or "").splitlines()[:1]
+              print(f"\n- `{case.get('name')}`: {message[0] if message else 'failed'}")
+          EOF

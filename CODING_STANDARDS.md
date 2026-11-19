@@ -23,12 +23,14 @@ Read during review. `scripts/check` enforces the mechanical rules (both builds, 
 
 ## The pipeline
 
-- `roku-test.yml` keeps the guarded start and stop of the `rce-cli` README's Pipelines recipe: the stop runs once the start step ran, on failure and cancel too, skips when RCE refused the start (exit 4), and passes the Run id the start recorded with `--run`.
+- `roku-test.yml` and `roku-test-pool.yml` keep the guarded start and stop of the `rce-cli` README's Pipelines recipe: the stop runs once the start step (in the Pool workflow, the Claim) ran, on failure and cancel too, skips when RCE refused the start (exit 4), and passes the Run id the start recorded with `--run`.
   Without the guard a failed job leaves a Run billing, or stops someone else's; without `--run` it stops a Run someone else started after this job's Run ended.
 - Every action is pinned to a full commit SHA, its version tag in a comment.
   A tag can be moved to other code; a SHA cannot, and these jobs hold the RCE token.
-- Secrets go in the `env` of only the steps that call `rce`.
+- Secrets go in the `env` of only the steps that call `rce`, or, for `RCE_DEV_PASSWORDS`, of only the step that takes the claimed member's Dev Password out of it.
   Every other step (`npm ci`, a build) then runs code that cannot read them.
+- A value taken out of a secret is masked with `::add-mask::` before anything else is written, then exported, never echoed.
+  GitHub masks a secret's whole value, not a part of it, so without the mask the Dev Password shows in any later output.
 
 ## Vocabulary
 
