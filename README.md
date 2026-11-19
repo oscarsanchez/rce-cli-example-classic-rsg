@@ -552,8 +552,8 @@ gh secret set RCE_TOKEN --repo "$repo"          # asks for it: paste the pipelin
 The variables are the Cloud Device's RCE id and its Dev Snapshot's id: a runner has no per-user config, so it addresses both by id. The third line pipes the Dev Password from `rce`'s stderr straight into the secret, so it is never printed. `gh secret set` without `--body` asks for the token without echoing it.
 
 - **Anyone with write access to the repo can use its secrets,** by changing a workflow. A GitHub Environment with you as required reviewer gates them behind your approval: if your plan offers required reviewers on a private repo, set the two secrets with `--env <environment>` instead and add `environment: <environment>` to the job. This repo's plan doesn't, so its secrets are plain repo secrets.
-- **One Run at a time across the RCE organisation.** The trial allows one Run at a time across the whole organisation, not per Cloud Device, so teammates in the same RCE organisation share it: while anyone's Run is going (yours at a terminal, an agent's, another copy's pipeline), the pipeline's start is refused, its stop skips and stops nothing, and the job fails. Re-run it when `rce device list --running` is empty.
-- **Give the pipeline a Cloud Device nobody else uses while it runs:** the stop step stops whatever Run is on that Cloud Device after a start that wasn't refused.
+- **On the RCE trial, one Run at a time across the organisation.** That is a trial limit, not per Cloud Device, so teammates in the same trial organisation share it: while anyone's Run is going (yours at a terminal, an agent's, another copy's pipeline), the pipeline's start is refused, its stop skips and stops nothing, and the job fails. Re-run it when `rce device list --running` is empty.
+- **Give the pipeline a Cloud Device nobody else uses while it runs:** another Run on it makes the job's start fail, not its stop. The stop step passes the Run id its start recorded (`--run`), so it stops only this job's Run, not one someone else started after it ended (details in the [Pipelines](https://github.com/oscarsanchez/rce-cli#pipelines-cicd) recipe's `--run` bullet).
 
 ### Cost per run
 

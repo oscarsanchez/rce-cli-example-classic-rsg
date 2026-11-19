@@ -23,8 +23,8 @@ Read during review. `scripts/check` enforces the mechanical rules (both builds, 
 
 ## The pipeline
 
-- `roku-test.yml` keeps the guarded start and stop of the `rce-cli` README's Pipelines recipe: the stop runs once the start step ran, on failure and cancel too, and skips when RCE refused the start (exit 4).
-  Without the guard a failed job leaves a Run billing, or stops someone else's.
+- `roku-test.yml` keeps the guarded start and stop of the `rce-cli` README's Pipelines recipe: the stop runs once the start step ran, on failure and cancel too, skips when RCE refused the start (exit 4), and passes the Run id the start recorded with `--run`.
+  Without the guard a failed job leaves a Run billing, or stops someone else's; without `--run` it stops a Run someone else started after this job's Run ended.
 - Every action is pinned to a full commit SHA, its version tag in a comment.
   A tag can be moved to other code; a SHA cannot, and these jobs hold the RCE token.
 - Secrets go in the `env` of only the steps that call `rce`.

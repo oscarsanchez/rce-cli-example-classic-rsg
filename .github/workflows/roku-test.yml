@@ -21,6 +21,9 @@ jobs:
     timeout-minutes: 10
     concurrency:
       group: rce-${{ vars.RCE_DEVICE }}   # one job at a time on this Cloud Device
+    defaults:
+      run:
+        shell: bash   # adds pipefail, so `| tee` keeps rce's exit code
     env:
       RCE_DEVICE: ${{ vars.RCE_DEVICE }}
       RCE_SNAPSHOT: ${{ vars.RCE_SNAPSHOT }}
@@ -44,7 +47,7 @@ jobs:
       - name: Install rce
         run: |
           mkdir -p "$RUNNER_TEMP/bin"
-          curl -fsSL -o "$RUNNER_TEMP/bin/rce" https://raw.githubusercontent.com/oscarsanchez/rce-cli/v0.1.0/bin/rce
+          curl -fsSL -o "$RUNNER_TEMP/bin/rce" https://raw.githubusercontent.com/oscarsanchez/rce-cli/v0.2.0/bin/rce
           chmod +x "$RUNNER_TEMP/bin/rce"
           "$RUNNER_TEMP/bin/rce" --version
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
@@ -59,8 +62,9 @@ jobs:
           RCE_TOKEN: ${{ secrets.RCE_TOKEN }}
         run: |
           status=0
-          rce device start "$RCE_DEVICE" --snapshot "$RCE_SNAPSHOT" --max-runtime 720 --json || status=$?
+          rce device start "$RCE_DEVICE" --snapshot "$RCE_SNAPSHOT" --max-runtime 720 --json | tee start.json || status=$?
           if [ "$status" -eq 4 ]; then echo "refused=true" >> "$GITHUB_OUTPUT"; fi   # no Run of ours to stop
+          if [ "$status" -eq 0 ]; then echo "run=$(jq .run.id start.json)" >> "$GITHUB_OUTPUT"; fi   # the Run to stop
           exit "$status"
       - name: Unit and UI tests
         env:
@@ -71,7 +75,10 @@ jobs:
         if: always() && contains(fromJSON('["success", "failure", "cancelled"]'), steps.start.outcome) && steps.start.outputs.refused != 'true'
         env:
           RCE_TOKEN: ${{ secrets.RCE_TOKEN }}
-        run: rce device stop "$RCE_DEVICE" --json
+          RCE_RUN: ${{ steps.start.outputs.run }}
+        run: |
+          if [ -z "$RCE_RUN" ]; then exit 0; fi   # the start failed and dealt with any Run it made
+          rce device stop "$RCE_DEVICE" --run "$RCE_RUN" --json
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
