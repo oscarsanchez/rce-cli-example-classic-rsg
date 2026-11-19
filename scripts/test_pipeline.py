@@ -71,6 +71,11 @@ def fake(bin_: Path, name: str, code: str) -> None:
     (bin_ / name).chmod(0o755)
 
 
+def with_fakes(tmp_path) -> dict:
+    """The environment with the fakes in tmp_path/bin first on PATH."""
+    return {**os.environ, "PATH": f"{tmp_path / 'bin'}:{os.environ['PATH']}"}
+
+
 def run_step(tmp_path, name: str, wanted: str, rce_exit=0, rce_stdout="", context=None):
     """Run one step's script as GitHub does, its `env:` filled from `context` (expression -> value).
     Returns the process, its $GITHUB_OUTPUT as a dict, and each rce call's arguments."""
@@ -86,7 +91,7 @@ def run_step(tmp_path, name: str, wanted: str, rce_exit=0, rce_stdout="", contex
     env = {k: re.sub(r"\$\{\{ ([\w.]+) \}\}", lambda e: (context or {}).get(e[1], ""), str(v)) for k, v in env.items()}
     done = subprocess.run(
         ["bash", "--noprofile", "--norc", "-eo", "pipefail", "-c", s["run"]],
-        env={**os.environ, "PATH": f"{tmp_path / 'bin'}:{os.environ['PATH']}", "GITHUB_OUTPUT": str(out), **env},
+        env={**with_fakes(tmp_path), "GITHUB_OUTPUT": str(out), **env},
         cwd=tmp_path, capture_output=True, text=True,
     )
     outputs = dict(line.split("=", 1) for line in out.read_text().splitlines())
@@ -125,6 +130,8 @@ def test_a_secret_reaches_only_the_steps_that_need_it(name, secret, steps):
 
 @pytest.mark.parametrize("name", WORKFLOWS)
 def test_secrets_appear_only_in_a_steps_env(name):
+    """A secret in a `run:` script or a `with:` input is out of reach of the step-by-step
+    checks above, and may land on a command line or in the logs."""
     in_env = sum(json.dumps(s.get("env", {})).count("secrets.") for s in job(name)["steps"])
     assert json.dumps(workflow(name)).count("secrets.") == in_env
 
@@ -138,6 +145,7 @@ def test_the_claimed_members_dev_password_reaches_only_the_test_step():
 
 @pytest.mark.parametrize("name", WORKFLOWS)
 def test_no_step_that_holds_a_secret_writes_to_github_env(name):
+    """`$GITHUB_ENV` hands a value to every later step, `npm ci` and the upload included."""
     for s in job(name)["steps"]:
         if re.search(r"secrets\.|outputs\.password", json.dumps(s.get("env", {}))):
             assert "GITHUB_ENV" not in s["run"], role(s)
@@ -155,6 +163,8 @@ def test_the_dev_password_is_masked_before_anything_else_is_written(tmp_path):
 
 
 def test_a_member_missing_from_the_secret_fails_and_prints_no_password(tmp_path):
+    """Otherwise the tests run without a Dev Password and fail on a 401 that hides why; the
+    error must not show another member's Dev Password either."""
     passwords = json.dumps({"376": "other-376"})
     done, outputs, _ = run_step(tmp_path, "roku-test-pool.yml", "password",
                                 context={"steps.start.outputs.id": "375", "secrets.RCE_DEV_PASSWORDS": passwords})
@@ -172,12 +182,16 @@ def test_the_stop_runs_always_once_the_start_ran_unless_it_was_refused(tmp_path,
     assert step(name, "stop")["if"] == guard(start["id"])
 
 
+def stop_context(started: dict) -> dict:
+    """The stop step's context after a start that wrote `started` to $GITHUB_OUTPUT."""
+    return {f"steps.start.outputs.{k}": v for k, v in started.items()} | {"vars.RCE_DEVICE": "375"}
+
+
 @pytest.mark.parametrize("name", WORKFLOWS)
 def test_the_stop_stops_only_the_run_its_start_recorded(tmp_path, name):
     """Without `--run` it stops a Run someone else started after this job's Run ended."""
     _, started, _ = run_step(tmp_path, name, "start", rce_stdout=STARTED)
-    context = {f"steps.start.outputs.{k}": v for k, v in started.items()} | {"vars.RCE_DEVICE": "375"}
-    done, _, calls = run_step(tmp_path, name, "stop", context=context)
+    done, _, calls = run_step(tmp_path, name, "stop", context=stop_context(started))
     assert done.returncode == 0, done.stderr
     assert calls == ["device stop 375 --run 9000 --json"]
 
@@ -185,9 +199,10 @@ def test_the_stop_stops_only_the_run_its_start_recorded(tmp_path, name):
 @pytest.mark.parametrize("name", WORKFLOWS)
 @pytest.mark.parametrize("code", [1, 5])
 def test_the_stop_does_nothing_without_a_run_id(tmp_path, name, code):
+    """A start that failed (1) or timed out (5) has stopped any Run it made and recorded no
+    Run id: a stop without `--run` could stop someone else's Run."""
     _, started, _ = run_step(tmp_path, name, "start", rce_exit=code)
-    context = {f"steps.start.outputs.{k}": v for k, v in started.items()} | {"vars.RCE_DEVICE": "375"}
-    done, _, calls = run_step(tmp_path, name, "stop", context=context)
+    done, _, calls = run_step(tmp_path, name, "stop", context=stop_context(started))
     assert done.returncode == 0 and calls == []
 
 
@@ -224,7 +239,7 @@ with open({str(gh_calls)!r}, "a") as calls:
 """)
     done = subprocess.run(
         ["bash", "--noprofile", "--norc", "-c", snippet(section)],
-        env={**os.environ, "PATH": f"{tmp_path / 'bin'}:{os.environ['PATH']}"},
+        env=with_fakes(tmp_path),
         cwd=tmp_path, capture_output=True, text=True, input="",
     )
     calls = [json.loads(line) for line in gh_calls.read_text().splitlines()] if gh_calls.exists() else []
@@ -237,9 +252,10 @@ def gh_set(calls: list, kind: str, name: str) -> dict:
 
 
 def test_the_dev_password_line_hands_gh_the_bare_password_and_prints_none(tmp_path):
-    """`rce` ends the Dev Password with a newline and `gh secret set` stores its input as is:
-    a secret with the newline fails the sideload with a 401."""
-    done, calls = run_snippet(tmp_path, "Set it up for your own Cloud Device", {"player": [351, 2001, "s3cret"]})
+    """`rce` ends the Dev Password with a newline and `gh secret set` stores its input as is.
+    `rce` v0.2.0 and earlier keep the newline and fail the sideload with a 401; the README line
+    drops it, for every version."""
+    done, calls = run_snippet(tmp_path, "Set it up for your own Cloud Device", {"player": [375, 2001, "s3cret"]})
     assert done.returncode == 0, done.stderr
     assert gh_set(calls, "secret", "RCE_DEV_PASSWORD")["stdin"] == "s3cret"
     assert "s3cret" not in done.stdout + done.stderr + json.dumps([c["argv"] for c in calls])

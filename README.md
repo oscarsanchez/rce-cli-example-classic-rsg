@@ -535,7 +535,7 @@ One job, in order: a check that the `RCE_DEVICE` and `RCE_SNAPSHOT` variables ar
 - **Results without reading logs:** the job summary shows the passed, failed and skipped counts and each failed test's first message line. The `test-results` artifact holds `junit.xml`, `console.log` and `screenshots/`, uploaded whether the tests passed or not.
 - **The stop is guarded,** as in the recipe: it runs once the start step has run, even after a failed test or a cancelled job, and skips when RCE refused the start (exit 4), because then the Run on the Cloud Device, if any, is someone else's.
 - **One job at a time per Cloud Device:** the job's `concurrency` group is the Cloud Device's RCE id. The job times out after 10 minutes, and the Run's cap is 12 (`--max-runtime 720`), so a runner that dies before the stop bills at most 12 minutes.
-- **The token and the Dev Password** reach only the steps that call `rce` (start, tests, stop), as environment variables from secrets: `rce` reads `RCE_TOKEN` and `RCE_DEV_PASSWORD` and takes neither as a flag, so neither shows in a command line or the logs.
+- **The token reaches only the start, tests and stop steps, and the Dev Password only the tests step,** as environment variables from secrets (`scripts/test_pipeline.py` checks both): `rce` reads `RCE_TOKEN` and `RCE_DEV_PASSWORD` and takes neither as a flag, so neither shows in a command line or the logs.
 
 ### Set it up for your own Cloud Device
 
