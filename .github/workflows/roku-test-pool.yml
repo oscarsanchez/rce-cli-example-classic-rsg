@@ -1,6 +1,6 @@
 name: roku-test-pool
 
-# Billed: each run starts two Runs, one per job, each on a Pool member the job claims.
+# Billed: each dispatch starts two Runs, one per job, each on a Pool member the job claims.
 # It runs only on demand. See README "Parallel jobs on a Pool".
 on:
   workflow_dispatch:
@@ -69,17 +69,19 @@ jobs:
           fi
           exit "$status"
       - name: Take its Dev Password
+        id: password
         env:
           RCE_DEV_PASSWORDS: ${{ secrets.RCE_DEV_PASSWORDS }}
           RCE_ID: ${{ steps.start.outputs.id }}
         run: |
           password=$(jq -er --arg id "$RCE_ID" '.[$id]' <<< "$RCE_DEV_PASSWORDS")   # fails if it has none
           echo "::add-mask::$password"   # first, so no later output shows it
-          echo "RCE_DEV_PASSWORD=$password" >> "$GITHUB_ENV"
+          echo "password=$password" >> "$GITHUB_OUTPUT"   # for the test step alone
       - name: ${{ matrix.suite }} tests
         env:
           RCE_TOKEN: ${{ secrets.RCE_TOKEN }}
           RCE_DEVICE: ${{ steps.start.outputs.id }}
+          RCE_DEV_PASSWORD: ${{ steps.password.outputs.password }}
           SELECT: ${{ matrix.select }}
         run: uv run tests/test_app.py -k "$SELECT"
       - name: Stop the Run

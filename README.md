@@ -571,7 +571,7 @@ This repo runs the pipeline on the maintainer's Cloud Device `auto`. After its f
 Each job checks that the `RCE_POOL` variable is set (it fails before any `rce` call if not), builds as `roku-test` does, then:
 
 - **Claims a Pool member** with `rce device start --pool --wait-free 120 --max-runtime 720 --json`, recording the claimed Cloud Device's RCE id and its Run's id, or that RCE refused the Claim (exit 4). There is no `concurrency` group: the Claim keeps the two jobs on different Cloud Devices.
-- **Takes that member's Dev Password** out of the `RCE_DEV_PASSWORDS` secret with `jq`, masks it with `::add-mask::` before anything can print it, and exports it as `RCE_DEV_PASSWORD`. A member missing from the secret fails the job, and the stop still runs.
+- **Takes that member's Dev Password** out of the `RCE_DEV_PASSWORDS` secret with `jq`, masks it with `::add-mask::` before anything can print it, and passes it as a step output to the test step alone, as `RCE_DEV_PASSWORD`. A member missing from the secret fails the job, and the stop still runs.
 - **Runs its suite** with `RCE_DEVICE` set to the claimed RCE id, then **stops its own Run** with the same guard as `roku-test` and that Run's id (`--run`).
 - **Reports its suite** in its own artifact (`test-results-unit`, `test-results-ui`) and its own job summary.
 
@@ -595,8 +595,8 @@ To set it up in your own copy, set up each member for development (see [Prerequi
   done
   gh variable set RCE_POOL --repo "$repo" --body "$pool"
   gh secret set RCE_DEV_PASSWORDS --repo "$repo" <<<"$passwords"
+  gh secret set RCE_TOKEN --repo "$repo"        # asks for it: paste the pipeline's token
 )
-gh secret set RCE_TOKEN --repo you/your-copy    # asks for it: paste the pipeline's token
 ```
 
 `RCE_POOL` maps each member's RCE id to its Dev Snapshot's id, and `RCE_DEV_PASSWORDS` each RCE id to its Dev Password. Each Dev Password goes from `rce`'s stderr into a variable and from there into the secret, so none is printed. A member with no stored Dev Password, or no Dev Snapshot, stops the snippet before `gh` sets anything, so an error message is never stored as a password. With `RCE_POOL` set in your terminal too, `rce device list --pool` shows which members are free.
@@ -605,8 +605,7 @@ For what a Pool can and can't do (no fairness between waiting jobs, why `--max-r
 
 Cost: two Runs per dispatch, each about 3 device-minutes and about one cent (see [Costs](#costs)); a job killed before its stop bills at most its 12-minute cap, about 4 cents.
 
-This repo's Pool workflow is a demo too. It ran green once on the maintainer's Cloud Devices `auto` and `player` ([the run](TODO-GREEN-RUN-URL)), then the maintainer deleted this repo's `RCE_TOKEN` and `RCE_DEV_PASSWORDS` secrets, as for `roku-test`: a new run here starts nothing. To run it yourself, set it up in your own copy, as above.
-<!-- TODO-GREEN-RUN-URL: the maintainer replaces it with the green roku-test-pool run's URL after the live dispatch (ticket 03). -->
+This repo's Pool workflow is a demo too. To run it yourself, set it up in your own copy, as above.
 
 ## Costs
 

@@ -27,9 +27,9 @@ Read during review. `scripts/check` enforces the mechanical rules (both builds, 
   Without the guard a failed job leaves a Run billing, or stops someone else's; without `--run` it stops a Run someone else started after this job's Run ended.
 - Every action is pinned to a full commit SHA, its version tag in a comment.
   A tag can be moved to other code; a SHA cannot, and these jobs hold the RCE token.
-- Secrets go in the `env` of only the steps that call `rce`, or, for `RCE_DEV_PASSWORDS`, of only the step that takes the claimed member's Dev Password out of it.
-  Every other step (`npm ci`, a build) then runs code that cannot read them.
-- A value taken out of a secret is masked with `::add-mask::` before anything else is written, then exported, never echoed.
+- Secrets go in the `env` of only the steps that call `rce`, or, for `RCE_DEV_PASSWORDS`, of only the step that takes the claimed member's Dev Password out of it. That step masks the Dev Password, writes it as a step output (`password=…` to `$GITHUB_OUTPUT`), never to `$GITHUB_ENV`, and only the test step gets it, as `RCE_DEV_PASSWORD: ${{ steps.<id>.outputs.password }}` in its `env`.
+  Every other step (`npm ci`, a build, the stop, the upload, the summary) then runs code that cannot read them.
+- A value taken out of a secret is masked with `::add-mask::` before anything else is written, and never printed to the log.
   GitHub masks a secret's whole value, not a part of it, so without the mask the Dev Password shows in any later output.
 
 ## Vocabulary
