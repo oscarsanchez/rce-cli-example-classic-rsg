@@ -546,11 +546,11 @@ Make an RCE token for the pipeline alone in the RCE web console (this repo's is 
 repo=you/your-copy                              # your copy of this repo
 gh variable set RCE_DEVICE --repo "$repo" --body "$(rce device show player --json | jq -r .id)"
 gh variable set RCE_SNAPSHOT --repo "$repo" --body "$(rce snapshot list player --json | jq -r '.[] | select(.dev_snapshot) | .id')"
-rce device show player --dev-password 2>&1 >/dev/null | gh secret set RCE_DEV_PASSWORD --repo "$repo"
+printf %s "$(rce device show player --dev-password 2>&1 >/dev/null)" | gh secret set RCE_DEV_PASSWORD --repo "$repo"
 gh secret set RCE_TOKEN --repo "$repo"          # asks for it: paste the pipeline's token
 ```
 
-The variables are the Cloud Device's RCE id and its Dev Snapshot's id: a runner has no per-user config, so it addresses both by id. The third line pipes the Dev Password from `rce`'s stderr straight into the secret, so it is never printed. `gh secret set` without `--body` asks for the token without echoing it.
+The variables are the Cloud Device's RCE id and its Dev Snapshot's id: a runner has no per-user config, so it addresses both by id. The third line takes the Dev Password from `rce`'s stderr and pipes it into the secret with `printf %s`, so it is never printed or put on a command line, and without the trailing newline `rce` writes after it: `gh secret set` stores its input as is, and a password with a newline fails the sideload. `gh secret set` without `--body` asks for the token without echoing it.
 
 - **Anyone with write access to the repo can use its secrets,** by changing a workflow. A GitHub Environment with you as required reviewer gates them behind your approval: if your plan offers required reviewers on a private repo, set the two secrets with `--env <environment>` instead and add `environment: <environment>` to the job. This repo's plan doesn't, so its secrets are plain repo secrets.
 - **On the RCE trial, one Run at a time across the organisation.** That is a trial limit, not per Cloud Device, so teammates in the same trial organisation share it: while anyone's Run is going (yours at a terminal, an agent's, another copy's pipeline), the pipeline's start is refused, its stop skips and stops nothing, and the job fails. Re-run it when `rce device list --running` is empty.
@@ -605,7 +605,7 @@ For what a Pool can and can't do (no fairness between waiting jobs, why `--max-r
 
 Cost: two Runs per dispatch, each about 3 device-minutes and about one cent (see [Costs](#costs)); a job killed before its stop bills at most its 12-minute cap, about 4 cents.
 
-This repo's Pool workflow is a demo too. To run it yourself, set it up in your own copy, as above.
+This repo's Pool workflow is a demo too. It ran green once on the maintainer's Cloud Devices `auto` and `player` ([the workflow run](https://github.com/oscarsanchez/rce-cli-example-classic-rsg/actions/runs/44602049384)), then the maintainer deleted this repo's `RCE_TOKEN` and `RCE_DEV_PASSWORDS` secrets, as for `roku-test`: a new dispatch here starts nothing. To run it yourself, set it up in your own copy, as above.
 
 ## Costs
 
