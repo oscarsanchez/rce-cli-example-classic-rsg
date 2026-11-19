@@ -1,6 +1,6 @@
 # Coding standards
 
-Read during review. `scripts/check` enforces the mechanical rules (both builds, BrighterScript diagnostics, the workflow lint); these are the judgement calls, each with its reason.
+Read during review. `scripts/check` enforces the mechanical rules (both builds, BrighterScript diagnostics, the workflow lint, the pipeline test); these are the judgement calls, each with its reason.
 
 ## Test oracles
 
@@ -23,14 +23,16 @@ Read during review. `scripts/check` enforces the mechanical rules (both builds, 
 
 ## The pipeline
 
-- `roku-test.yml` and `roku-test-pool.yml` keep the guarded start and stop of the `rce-cli` README's Pipelines recipe: the stop runs once the start step (in the Pool workflow, the Claim) ran, on failure and cancel too, skips when RCE refused the start (exit 4), and passes the Run id the start recorded with `--run`.
-  Without the guard a failed job leaves a Run billing, or stops someone else's; without `--run` it stops a Run someone else started after this job's Run ended.
-- Every action is pinned to a full commit SHA, its version tag in a comment.
-  A tag can be moved to other code; a SHA cannot, and these jobs hold the RCE token.
-- Secrets go in the `env` of only the steps that call `rce`, or, for `RCE_DEV_PASSWORDS`, of only the step that takes the claimed member's Dev Password out of it. That step masks the Dev Password, writes it as a step output (`password=…` to `$GITHUB_OUTPUT`), never to `$GITHUB_ENV`, and only the test step gets it, as `RCE_DEV_PASSWORD: ${{ steps.<id>.outputs.password }}` in its `env`.
-  Every other step (`npm ci`, a build, the stop, the upload, the summary) then runs code that cannot read them.
-- A value taken out of a secret is masked with `::add-mask::` before anything else is written, and never printed to the log.
-  GitHub masks a secret's whole value, not a part of it, so without the mask the Dev Password shows in any later output.
+`scripts/test_pipeline.py` checks the mechanical rules of `roku-test.yml` and `roku-test-pool.yml`, each test with its reason: every action pinned to a commit SHA with its version tag in a comment; `shell: bash`; `RCE_TOKEN`, `RCE_DEV_PASSWORD` and `RCE_DEV_PASSWORDS` only in the `env` of the steps that need them; the claimed member's Dev Password masked first and passed to the test step alone as a step output, never through `$GITHUB_ENV`; the stop's guard, and its `--run`. It also runs the README's two secret snippets with a fake `rce` and `gh`. What it can't decide:
+
+- A step gets a secret only if it calls `rce`, or, for `RCE_DEV_PASSWORDS`, takes the claimed member's Dev Password out of it. Adding a step to the test's list of a secret's steps is a review decision, not the fix for a red test.
+  A step that holds a secret runs code that can read it; `npm ci` alone runs every dependency's install scripts.
+- A new SHA pin is the commit its version tag names.
+  The test checks the pin's shape, not which commit the tag pointed to.
+- No step prints a value taken out of a secret, not only the password step the test runs.
+  GitHub masks a secret's whole value, not a part of it.
+- A README line that sets a secret goes in one of the two snippets the test runs (the first `sh` block of "Set it up for your own Cloud Device" and of "Parallel jobs on a Pool"), or the test gains a case for it.
+  An untested line is how a Dev Password with a trailing newline shipped.
 
 ## Vocabulary
 

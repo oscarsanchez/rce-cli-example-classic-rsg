@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# The offline check: both builds, the workflow lint, and the test suite's refusal
-# without a Cloud Device. Starts no Run and calls no rce. CI runs it on every push.
+# The offline check: both builds, the workflow lint, the pipeline test, and the test
+# suite's refusal without a Cloud Device. Starts no Run and calls no rce. CI runs it on
+# every push.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
@@ -10,7 +11,7 @@ echo "== app build"
 echo "== unit-test build"
 npm ci --no-audit --no-fund
 log="$(mktemp)"
-trap 'rm -f "$log"; rm -rf tests/__pycache__' EXIT
+trap 'rm -f "$log"; rm -rf tests/__pycache__ scripts/__pycache__' EXIT
 npm run --silent build:tests 2>&1 | tee "$log"
 # bsc exits 0 on warnings; any diagnostic fails the check.
 if grep -qE ' - (error|warning) BS[0-9]+:' "$log"; then
@@ -26,6 +27,9 @@ else
     uv run --quiet --no-project --with pyyaml python -c \
         'import sys, yaml; [yaml.safe_load(open(f)) for f in sys.argv[1:]]' .github/workflows/*.yml
 fi
+
+echo "== pipeline test: the workflows' rules and the README's secret snippets"
+uv run --quiet scripts/test_pipeline.py -q
 
 echo "== test suite refuses to start without RCE_DEVICE"
 status=0
